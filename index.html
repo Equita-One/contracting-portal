@@ -150,8 +150,9 @@ async function enterApp(){
 }
 async function loadAll(){
   try{ PID=(await sb.rpc("my_producer_id")).data; }catch(e){}
+  if(!PID){ try{ PID=(await sb.rpc("ensure_my_producer")).data; }catch(e){} }
   try{ PRODUCER=(await sb.rpc("my_producer")).data||{}; }catch(e){PRODUCER={};}
-  if(!PID){ return; }
+  if(!PID){ await loadFlags(); return; }
   const p=await sb.from("producer_profile").select("*").eq("producer_id",PID).maybeSingle(); PROFILE=p.data||{producer_id:PID};
   const q=await sb.from("disclosure_questions").select("*").order("ordinal"); QUESTIONS=q.data||[];
   const a=await sb.from("producer_disclosure_answers").select("*").eq("producer_id",PID); ANSWERS={}; (a.data||[]).forEach(r=>ANSWERS[r.question_id]=r);
@@ -277,8 +278,4 @@ async function sign(btn){ const name=$("s_name").value.trim(); const ok=$("s_con
   btn.disabled=true;
   const {error}=await sb.from("producer_signature").upsert({producer_id:PID,signature_path:"typed:"+name,authorization_version:"v1",authorization_text:"Equita agent authorization v1",signed_at:new Date().toISOString(),consent:true,updated_at:new Date().toISOString()});
   btn.disabled=false; if(error){$("sSaved").textContent="Error: "+error.message;$("sSaved").style.color="var(--red)";return;}
-  $("sSaved").textContent="Signed ✓";$("sSaved").style.color="var(--green)"; await loadFlags(); render(); go("signature");
-}
-</script>
-</body>
-</html>
+  $("sSaved").textContent="Signed ✓";$("sSaved").style
