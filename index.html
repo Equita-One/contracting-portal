@@ -122,7 +122,7 @@ const sb=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefr
 const $=id=>document.getElementById(id);
 const qs=new URLSearchParams(location.search);
 const AFF=qs.get("aff")||qs.get("affiliation_id")||null;
-let MODE="reg", PID=null, PRODUCER=null, FLAGS=[], PROFILE={}, ANSWERS={}, QUESTIONS=[], LICENSES=[], DOCS=[], FINRAD={}, EMP=[], ADDR=[], TRAIN=[], SECTION="home";
+let MODE="reg", PID=null, PRODUCER=null, FLAGS=[], PROFILE={}, ANSWERS={}, QUESTIONS=[], LICENSES=[], DOCS=[], FINRAD={}, EMP=[], ADDR=[], TRAIN=[], SIG={}, SIGURL=null, SECTION="home";
 
 function setMode(m){MODE=m;$("tabReg").classList.toggle("on",m==="reg");$("tabLogin").classList.toggle("on",m==="login");$("regFields").classList.toggle("hidden",m==="login");$("authBtn").textContent=m==="reg"?"Create my account":"Send my sign-in link";$("authMsg").innerHTML="";}
 function amsg(t,ok){$("authMsg").className="msg "+(ok?"ok":"err");$("authMsg").textContent=t;}
@@ -167,6 +167,8 @@ async function loadAll(){
   EMP=(await sb.from("producer_employment").select("*").eq("producer_id",PID).order("from_date",{ascending:false})).data||[];
   ADDR=(await sb.from("producer_address_history").select("*").eq("producer_id",PID).order("from_date",{ascending:false})).data||[];
   TRAIN=(await sb.from("producer_training").select("*").eq("producer_id",PID).order("completed_date",{ascending:false})).data||[];
+  SIG=(await sb.from("producer_signature").select("*").eq("producer_id",PID).maybeSingle()).data||{};
+  SIGURL=null; if(SIG.signature_path){ try{ const su=await sb.storage.from("producer-docs").createSignedUrl(SIG.signature_path,3600); SIGURL=(su.data&&su.data.signedUrl)||null; }catch(e){} }
   await loadFlags();
 }
 async function loadFlags(){ try{ FLAGS=(await sb.rpc("my_profile_flags")).data||[]; }catch(e){FLAGS=[];} }
@@ -230,13 +232,14 @@ function drawPersonal(P){
    <h2 class="sec" style="margin-top:8px">Residence address</h2>
    <div class="row c2" style="margin:8px 0 12px">${field("f_a1","Street",p.res_addr1)}${field("f_a2","Apt/Unit",p.res_addr2)}</div>
    <div class="row c4" style="margin-bottom:12px">${field("f_ci","City",p.res_city)}${field("f_st","State",p.res_state)}${field("f_zip","ZIP",p.res_zip)}${field("f_co","County",p.resident_county)}</div>
+   <div class="row c2" style="margin-bottom:12px"><div>${field("f_resfrom","Living at this residence since",p.res_from_date,"date")}<div class="sechint" style="margin-top:4px">If less than 5 years, add prior addresses under History.</div></div><div></div></div>
    <h2 class="sec" style="margin-top:8px">Resident license</h2>
    <div class="row c2" style="margin:8px 0 14px">${field("f_rls","Resident license state",p.resident_lic_state)}${field("f_rln","Resident license #",p.resident_lic_number)}</div>
    <button class="btn" onclick="submitPersonal(this)">Save</button> <span id="pSaved" class="saved"></span></div>`;
 }
 async function submitPersonal(btn){ btn.disabled=true;
   const g=id=>$(id).value.trim()||null;
-  const err=await saveProfile({dob:g("f_dob"),ssn:g("f_ssn"),gender:g("f_gender"),dl_state:g("f_dls"),dl_number:g("f_dln"),place_of_birth:g("f_pob"),res_addr1:g("f_a1"),res_addr2:g("f_a2"),res_city:g("f_ci"),res_state:g("f_st"),res_zip:g("f_zip"),resident_county:g("f_co"),resident_lic_state:g("f_rls"),resident_lic_number:g("f_rln")});
+  const err=await saveProfile({dob:g("f_dob"),ssn:g("f_ssn"),gender:g("f_gender"),dl_state:g("f_dls"),dl_number:g("f_dln"),place_of_birth:g("f_pob"),res_addr1:g("f_a1"),res_addr2:g("f_a2"),res_city:g("f_ci"),res_state:g("f_st"),res_zip:g("f_zip"),resident_county:g("f_co"),res_from_date:g("f_resfrom"),resident_lic_state:g("f_rls"),resident_lic_number:g("f_rln")});
   btn.disabled=false; if(err){$("pSaved").textContent="Error: "+err.message;$("pSaved").style.color="var(--red)";return;}
   $("pSaved").textContent="Saved ✓";$("pSaved").style.color="var(--green)"; await loadFlags(); render(); go("personal");
 }
@@ -296,9 +299,8 @@ function drawBanking(P){
    <div class="row c3" style="margin:8px 0 8px">${field("e_prov","Carrier/Provider","")}${field("e_pol","Policy #","")}${field("e_exp","Expiration","","date")}</div>
    <label class="filepick">E&O certificate / declaration page (PDF or image)<input type="file" id="e_cert" accept=".pdf,image/*"/>${eo?`<span class="cur">On file: ${esc(eo.filename)}</span>`:''}</label>
    <div style="margin-top:12px"><button class="btn alt" onclick="saveEo(this)">Save E&O</button> <span id="eSaved" class="saved"></span></div>
-   <div class="hintbox" style="margin-top:16px;border-color:var(--accent)"><b style="color:var(--text)">Don't have E&O coverage?</b> You can purchase a policy through our partner and it will attach to your profile automatically. <a class="dl" onclick="eoOptions()">See E&O plan options →</a></div></div>`;
+   <div class="hintbox" style="margin-top:16px;border-color:var(--accent)"><b style="color:var(--text)">Don't have E&O coverage?</b> Purchase a policy through our partner CalSurance, then upload your certificate above. <a class="dl" href="https://opsfarm.calsurance.com/CONA/ProductPage/1611/3591/Landing.aspx" target="_blank" rel="noopener">Get E&O coverage through CalSurance →</a></div></div>`;
 }
-function eoOptions(){ alert("E&O plan options (coming soon):\n\n• MedicareFE — Medicare, Final Expense, Mortgage Life\n• Plan A — + Life, Accident & Health, LTC / Disability\n• Plan B — + Fixed & Indexed Annuities\n• Plan C — + Variable Products & Mutual Funds\n\nIn-app purchase is being built — you'll be able to buy a policy and it will attach here automatically."); }
 async function saveEft(btn){btn.disabled=true;const g=id=>$(id).value.trim()||null;
   let vc=null; const f=$("b_vc"); if(f&&f.files&&f.files[0]){ try{ vc=await uploadDoc(f.files[0],"Voided Check"); }catch(e){ $("bSaved").textContent="Upload failed: "+e.message; $("bSaved").style.color="var(--red)"; btn.disabled=false; return; } }
   const patch={producer_id:PID,bank_name:g("b_bank"),account_type:g("b_type"),routing_number:g("b_rt"),account_number:g("b_acct"),updated_at:new Date().toISOString()}; if(vc) patch.voided_check_doc_id=vc;
@@ -340,7 +342,7 @@ function drawHistory(P){
    <div class="row c2" style="margin:10px 0 8px">${field("em_co","Company","")}${field("em_pos","Position","")}</div>
    <div class="row c3" style="margin-bottom:10px">${field("em_from","From","","date")}${field("em_to","To (blank = current)","","date")}${field("em_loc","Location (city, state)","")}</div>
    <button class="btn alt" onclick="addEmp(this)">Add employment</button> <span id="empSaved" class="saved"></span>
-   <h2 class="sec" style="margin-top:22px">Address history</h2><p class="sechint">Prior addresses excluding your current residence (recommended).</p>
+   <h2 class="sec" style="margin-top:22px">Address history</h2><p class="sechint">Prior addresses (excluding your current residence). Combined with your residence start date, this must cover at least the last 5 years — add multiple as needed.</p>
    <div>${ADDR.map(a=>`<div class="list-row"><span>${esc(a.addr1||"")}, ${esc(a.city||"")} ${esc(a.state||"")} <span class="pill">${esc(a.from_date||"")} → ${esc(a.to_date||"")}</span></span></div>`).join("")||'<p class="sechint">No prior addresses added.</p>'}</div>
    <div class="row c2" style="margin:10px 0 8px">${field("ah_a1","Street","")}${field("ah_ci","City","")}</div>
    <div class="row c4" style="margin-bottom:10px">${field("ah_st","State","")}${field("ah_zip","ZIP","")}${field("ah_from","From","","date")}${field("ah_to","To","","date")}</div>
@@ -358,7 +360,8 @@ async function addAddr(btn){btn.disabled=true;const g=id=>$(id).value.trim()||nu
   await loadAll(); render(); go("history");}
 
 function drawTraining(P){
-  P.innerHTML=`<div class="card"><h2 class="sec">CE & Training</h2><p class="sechint">Add your AML (Anti-Money Laundering) course — most carriers require it — plus any other certifications. Attach the certificate.</p>
+  P.innerHTML=`<div class="card"><h2 class="sec">CE & Training</h2><p class="sechint">Add your AML (Anti-Money Laundering) course — strongly recommended; most carriers require it — plus any other certifications. Attach the certificate.</p>
+   <div class="hintbox">Need to complete AML or continuing education? Take courses at <a class="dl" href="https://www.limra.com/" target="_blank" rel="noopener">LIMRA →</a></div>
    <div>${TRAIN.map(t=>`<div class="list-row"><span><b>${esc(t.course_type||"")}</b> ${esc(t.provider||"")} <span class="pill">${esc(t.completed_date||"")}</span></span></div>`).join("")||'<p class="sechint">No courses added yet.</p>'}</div>
    <div class="row c3" style="margin:10px 0 8px">${field("tr_type","Course type (e.g. AML)","")}${field("tr_prov","Provider (e.g. LIMRA)","")}${field("tr_done","Completed date","","date")}</div>
    <label class="filepick">Certificate (PDF or image)<input type="file" id="tr_cert" accept=".pdf,image/*"/></label>
@@ -371,19 +374,51 @@ async function addTrain(btn){btn.disabled=true;const g=id=>$(id).value.trim()||n
   btn.disabled=false; if(error){$("trSaved").textContent="Error: "+error.message;$("trSaved").style.color="var(--red)";return;}
   await loadAll(); render(); go("training");}
 
+const AUTH_TEXT=`I hereby authorize <b>Senior Advisor Services, Insurance Services LLC</b> and its general agency customers (the "Authorized Parties") to affix or append a copy of my signature, as set forth below, to any and all required signature fields on forms and agreements of any insurance carrier (a "Carrier") designated by me through the Equita software or through any other means, including without limitation by e-mail or orally. The Authorized Parties shall be permitted to complete and submit all such forms and agreements on my behalf for the purpose of becoming authorized to sell Carrier insurance products. I hereby release, indemnify and hold harmless the Authorized Parties against any and all claims, demands, losses, damages, and causes of action, including expenses, costs and reasonable attorneys' fees which they may sustain or incur as a result of carrying out the authority granted hereunder.<br><br>By my signature below, I certify that the information I have submitted to the Authorized Parties is correct to the best of my knowledge and acknowledge that I have read and reviewed the forms and agreements which the Authorized Parties have been authorized to affix my signature.`;
 function drawSignature(P){
-  P.innerHTML=`<div class="card"><h2 class="sec">Sign once, submit everywhere</h2><p class="sechint">Your signature and this authorization are applied to every carrier packet you request — you won't sign each form individually.</p>
-   <div class="card" style="background:#0d1017;font-size:13px;color:var(--muted);margin-bottom:14px">I authorize Equita and its contracted carriers to use the information in my profile to prepare and submit my appointment paperwork, to verify my licensing and background as required, and I certify that the information I have provided is true and complete.</div>
-   <div style="margin-bottom:12px">${field("s_name","Type your full legal name to sign","")}</div>
-   <label style="display:flex;gap:8px;align-items:center;text-transform:none;font-size:13px;color:var(--text);margin-bottom:14px"><input type="checkbox" id="s_consent" style="width:auto"/> I have read and agree to the authorization above.</label>
-   <button class="btn" onclick="sign(this)">Apply my signature</button> <span id="sSaved" class="saved"></span></div>`;
+  P.innerHTML=`<div class="card"><h2 class="sec">Signature Authorization</h2><p class="sechint">Your signature and this authorization are applied to every carrier packet — you won't sign each form individually.</p>
+   <div class="card" style="background:#0d1017;font-size:12px;color:var(--muted);margin-bottom:14px;max-height:190px;overflow:auto"><b style="color:var(--text)">Please read this authorization, then sign in the box below.</b><br><br>${AUTH_TEXT}</div>
+   <label style="display:flex;gap:8px;align-items:center;text-transform:none;font-size:13px;color:var(--text);margin-bottom:14px"><input type="checkbox" id="s_consent" ${(SIG&&SIG.consent)?'checked':''} style="width:auto"/> I have read and agree to the authorization above.</label>
+   <label style="margin-bottom:6px">Draw your signature (use your mouse, or your finger on a touchscreen/iPad)</label>
+   <div style="background:#fff;border-radius:8px;border:1px solid var(--line);display:inline-block;max-width:100%"><canvas id="sigpad" width="460" height="150" style="touch-action:none;display:block;border-radius:8px;max-width:100%"></canvas></div>
+   <div style="margin:10px 0"><button class="btn alt" onclick="clearSig()">Clear</button> <button class="btn" onclick="saveSig(this)">Save signature</button> <span id="sSaved" class="saved"></span></div>
+   <div class="hintbox">Prefer to upload? <label class="dl" style="cursor:pointer">Upload a signature image<input type="file" id="sig_up" accept="image/*" style="display:none" onchange="uploadSigImg(this)"/></label> — or <a class="dl" href="signature-authorization-form.pdf" target="_blank">print the authorization form</a>, sign it, then <label class="dl" style="cursor:pointer">upload the signed form<input type="file" id="sig_form" accept=".pdf,image/*" style="display:none" onchange="uploadSignedForm(this)"/></label>.</div>
+   ${SIGURL?`<div style="margin-top:14px"><label>Signature on file</label><div style="background:#fff;border-radius:8px;padding:8px;display:inline-block;border:1px solid var(--line)"><img src="${SIGURL}" style="max-height:90px;max-width:320px"/></div></div>`:''}
+   </div>`;
+  setTimeout(initSigPad,60);
 }
-async function sign(btn){ const name=$("s_name").value.trim(); const ok=$("s_consent").checked;
-  if(!name||!ok){$("sSaved").textContent="Type your name and check the box.";$("sSaved").style.color="var(--red)";return;}
+let sigCtx=null, sigDrawing=false, sigHasInk=false;
+function initSigPad(){ const c=document.getElementById('sigpad'); if(!c)return; sigCtx=c.getContext('2d'); sigCtx.lineWidth=2.4; sigCtx.lineCap='round'; sigCtx.lineJoin='round'; sigCtx.strokeStyle='#0b1220'; sigHasInk=false;
+  const pos=e=>{const r=c.getBoundingClientRect(); return [ (e.clientX-r.left)*(c.width/r.width), (e.clientY-r.top)*(c.height/r.height) ];};
+  c.onpointerdown=e=>{ e.preventDefault(); sigDrawing=true; const [x,y]=pos(e); sigCtx.beginPath(); sigCtx.moveTo(x,y); if(c.setPointerCapture){try{c.setPointerCapture(e.pointerId);}catch(_){}} };
+  c.onpointermove=e=>{ if(!sigDrawing)return; e.preventDefault(); const [x,y]=pos(e); sigCtx.lineTo(x,y); sigCtx.stroke(); sigHasInk=true; };
+  c.onpointerup=c.onpointerleave=()=>{ sigDrawing=false; };
+}
+function clearSig(){ const c=document.getElementById('sigpad'); if(c&&sigCtx){ sigCtx.clearRect(0,0,c.width,c.height); sigHasInk=false; } }
+async function commitSignature(fileOrBlob, mime){
+  const ext = mime==='application/pdf'?'pdf':(mime==='image/jpeg'?'jpg':'png');
+  const path=PID+"/Signature/"+Date.now()+"_signature."+ext;
+  const up=await sb.storage.from("producer-docs").upload(path, fileOrBlob, {upsert:false, contentType:mime});
+  if(up.error) throw up.error;
+  await sb.from("producer_documents").insert({producer_id:PID, kind:'Signature', filename:'signature.'+ext, storage_path:path, mime:mime});
+  const {error}=await sb.from("producer_signature").upsert({producer_id:PID, signature_path:path, authorization_version:"v1", authorization_text:"Senior Advisor Services agent authorization v1", signed_at:new Date().toISOString(), consent:true, updated_at:new Date().toISOString()});
+  if(error) throw error;
+}
+async function saveSig(btn){ if(!document.getElementById('s_consent').checked){ $("sSaved").textContent="Please check the authorization box."; $("sSaved").style.color="var(--red)"; return; }
+  const c=document.getElementById('sigpad'); if(!sigHasInk){ $("sSaved").textContent="Draw your signature first, or upload one."; $("sSaved").style.color="var(--red)"; return; }
   btn.disabled=true;
-  const {error}=await sb.from("producer_signature").upsert({producer_id:PID,signature_path:"typed:"+name,authorization_version:"v1",authorization_text:"Equita agent authorization v1",signed_at:new Date().toISOString(),consent:true,updated_at:new Date().toISOString()});
-  btn.disabled=false; if(error){$("sSaved").textContent="Error: "+error.message;$("sSaved").style.color="var(--red)";return;}
-  $("sSaved").textContent="Signed ✓";$("sSaved").style.color="var(--green)"; await loadFlags(); render(); go("signature");
+  const blob=await new Promise(res=>c.toBlob(res,'image/png'));
+  try{ await commitSignature(blob,'image/png'); $("sSaved").textContent="Signed ✓"; $("sSaved").style.color="var(--green)"; }catch(e){ $("sSaved").textContent="Error: "+e.message; $("sSaved").style.color="var(--red)"; btn.disabled=false; return; }
+  btn.disabled=false; await loadAll(); render(); go('signature');
+}
+async function uploadSigImg(inp){ const f=inp.files&&inp.files[0]; if(!f)return; if(!document.getElementById('s_consent').checked){ alert("Please check the authorization box first."); inp.value=''; return; }
+  const c=document.getElementById('sigpad'); const img=new Image();
+  img.onload=async()=>{ sigCtx.clearRect(0,0,c.width,c.height); const r=Math.min(c.width/img.width,c.height/img.height,1); const w=img.width*r,h=img.height*r; sigCtx.drawImage(img,(c.width-w)/2,(c.height-h)/2,w,h); sigHasInk=true;
+    try{ await commitSignature(f,f.type||'image/png'); }catch(e){ alert(e.message); } await loadAll(); render(); go('signature'); };
+  img.src=URL.createObjectURL(f);
+}
+async function uploadSignedForm(inp){ const f=inp.files&&inp.files[0]; if(!f)return; if(!document.getElementById('s_consent').checked){ alert("Please check the authorization box first."); inp.value=''; return; }
+  try{ await commitSignature(f, f.type||'application/pdf'); }catch(e){ alert(e.message); } await loadAll(); render(); go('signature');
 }
 </script>
 </body>
