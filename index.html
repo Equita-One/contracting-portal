@@ -55,6 +55,11 @@ h2.sec{font-size:16px;margin:0 0 4px}
 .sechint{color:var(--muted);font-size:13px;margin:0 0 16px}
 .q{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
 .q .qt{font-size:13.5px;margin-bottom:8px}
+.qnote{font-size:12px;color:#9fc0f0;background:rgba(46,90,172,.12);border-left:3px solid var(--accent);padding:6px 9px;border-radius:6px;margin:0 0 8px}
+.filepick{display:block;margin-top:10px}
+.filepick .cur{font-size:12px;color:var(--green);margin-top:4px}
+.hintbox{font-size:12px;color:var(--muted);background:#0d1017;border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin:8px 0}
+.dl{color:var(--accent2);text-decoration:underline;cursor:pointer}
 .yn{display:inline-flex;gap:6px}
 .yn button{padding:5px 14px;background:#0d1017;border:1px solid var(--line);color:var(--muted);font-size:13px}
 .yn button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
@@ -117,7 +122,7 @@ const sb=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefr
 const $=id=>document.getElementById(id);
 const qs=new URLSearchParams(location.search);
 const AFF=qs.get("aff")||qs.get("affiliation_id")||null;
-let MODE="reg", PID=null, PRODUCER=null, FLAGS=[], PROFILE={}, ANSWERS={}, QUESTIONS=[], LICENSES=[], SECTION="home";
+let MODE="reg", PID=null, PRODUCER=null, FLAGS=[], PROFILE={}, ANSWERS={}, QUESTIONS=[], LICENSES=[], DOCS=[], SECTION="home";
 
 function setMode(m){MODE=m;$("tabReg").classList.toggle("on",m==="reg");$("tabLogin").classList.toggle("on",m==="login");$("regFields").classList.toggle("hidden",m==="login");$("authBtn").textContent=m==="reg"?"Create my account":"Send my sign-in link";$("authMsg").innerHTML="";}
 function amsg(t,ok){$("authMsg").className="msg "+(ok?"ok":"err");$("authMsg").textContent=t;}
@@ -157,9 +162,19 @@ async function loadAll(){
   const q=await sb.from("disclosure_questions").select("*").order("ordinal"); QUESTIONS=q.data||[];
   const a=await sb.from("producer_disclosure_answers").select("*").eq("producer_id",PID); ANSWERS={}; (a.data||[]).forEach(r=>ANSWERS[r.question_id]=r);
   const l=await sb.from("producer_licenses").select("*").eq("producer_id",PID).order("created_at"); LICENSES=l.data||[];
+  const dd=await sb.from("producer_documents").select("*").eq("producer_id",PID).order("created_at",{ascending:false}); DOCS=dd.data||[];
   await loadFlags();
 }
 async function loadFlags(){ try{ FLAGS=(await sb.rpc("my_profile_flags")).data||[]; }catch(e){FLAGS=[];} }
+async function uploadDoc(file, kind){
+  if(!file||!PID) return null;
+  const safe=String(file.name).replace(/[^A-Za-z0-9._-]/g,'_');
+  const path=PID+"/"+kind.replace(/[^A-Za-z0-9]/g,'_')+"/"+Date.now()+"_"+safe;
+  const up=await sb.storage.from("producer-docs").upload(path, file, {upsert:false, contentType:file.type||undefined});
+  if(up.error) throw up.error;
+  const doc=await sb.from("producer_documents").insert({producer_id:PID, kind:kind, filename:file.name, storage_path:path, mime:file.type}).select("id").single();
+  return doc.data?doc.data.id:null;
+}
 
 const SECTIONS=[
   {k:"home",label:"Overview",match:[]},
@@ -232,8 +247,11 @@ async function addLicense(btn){ btn.disabled=true; const g=id=>$(id).value.trim(
 function drawDisclosures(P){
   P.innerHTML=`<div class="card"><h2 class="sec">Background questions</h2><p class="sechint">Answer all ${QUESTIONS.length}. A “Yes” asks for a short explanation carriers require.</p>
    <div id="qlist">${QUESTIONS.map(q=>{const a=ANSWERS[q.id]||{};const ans=a.answer;return `<div class="q"><div class="qt">${q.ordinal}. ${esc(q.question)}</div>
+     ${q.note?`<div class="qnote">${esc(q.note)}</div>`:''}
      <div class="yn"><button class="${ans===false?'on':''}" onclick="answer(${q.id},false,this)">No</button><button class="yes ${ans===true?'on':''}" onclick="answer(${q.id},true,this)">Yes</button></div>
-     <div id="occ_${q.id}" class="${ans===true?'':'hidden'}" style="margin-top:10px"><label>Details (date, action taken, explanation)</label><textarea id="occtx_${q.id}" rows="2" onchange="saveOcc(${q.id})">${esc((a.__occ||''))}</textarea></div></div>`;}).join("")}</div>
+     <div id="occ_${q.id}" class="${ans===true?'':'hidden'}" style="margin-top:10px"><label>Details (date, action taken, explanation)</label><textarea id="occtx_${q.id}" rows="2" onchange="saveOcc(${q.id})">${esc((a.__occ||''))}</textarea>
+       <label class="filepick">Attach supporting documentation (carriers require this)<input type="file" id="occf_${q.id}" accept=".pdf,image/*" onchange="saveOcc(${q.id})"/>${a.__docname?`<span class="cur">Attached: ${esc(a.__docname)}</span>`:''}</label>
+     </div></div>`;}).join("")}</div>
    <span id="dSaved" class="saved"></span></div>`;
 }
 async function answer(qid,val,btn){
@@ -243,28 +261,39 @@ async function answer(qid,val,btn){
   if(!error&&data){ANSWERS[qid]=data;} await loadFlags(); render(); go("disclosures");
 }
 async function saveOcc(qid){ const a=ANSWERS[qid]; if(!a)return; const tx=$("occtx_"+qid).value.trim();
-  // one occurrence per answer (MVP): delete + insert
+  const f=$("occf_"+qid); const file=f&&f.files&&f.files[0];
+  const ex=(await sb.from("disclosure_occurrences").select("id,doc_id").eq("answer_id",a.id).maybeSingle()).data;
+  let doc_id=ex?ex.doc_id:null, docname=a.__docname||null;
+  if(file){ try{ doc_id=await uploadDoc(file,"Disclosure"); docname=file.name; }catch(e){ alert("Upload failed: "+e.message); } }
   await sb.from("disclosure_occurrences").delete().eq("answer_id",a.id);
-  if(tx){ await sb.from("disclosure_occurrences").insert({answer_id:a.id,explanation:tx}); a.__occ=tx; }
+  if(tx||doc_id){ await sb.from("disclosure_occurrences").insert({answer_id:a.id,explanation:tx,doc_id:doc_id}); }
+  a.__occ=tx; a.__docname=docname;
   await loadFlags(); render(); go("disclosures");
 }
 
 function drawBanking(P){
-  P.innerHTML=`<div class="card"><h2 class="sec">Banking (direct deposit) & E&O</h2><p class="sechint">Optional but recommended. Banking lets carriers pay commissions directly.</p>
+  const eft=DOCS.filter(d=>d.kind==="Voided Check")[0], eo=DOCS.filter(d=>d.kind==="E&O")[0];
+  P.innerHTML=`<div class="card"><h2 class="sec">Banking (direct deposit) & E&O</h2><p class="sechint">Banking lets carriers pay commissions directly. Carriers require a voided check or direct-deposit form, plus a copy of your E&O certificate.</p>
    <h2 class="sec" style="margin-top:8px">EFT</h2>
    <div class="row c2" style="margin:8px 0 12px">${field("b_bank","Bank name","")}${field("b_type","Account type (Checking/Savings)","")}</div>
-   <div class="row c2" style="margin-bottom:12px">${field("b_rt","Routing #","")}${field("b_acct","Account #","")}</div>
-   <button class="btn alt" onclick="saveEft(this)">Save banking</button> <span id="bSaved" class="saved"></span>
-   <h2 class="sec" style="margin-top:18px">Errors & Omissions</h2>
-   <div class="row c3" style="margin:8px 0 12px">${field("e_prov","Carrier/Provider","")}${field("e_pol","Policy #","")}${field("e_exp","Expiration","","date")}</div>
-   <button class="btn alt" onclick="saveEo(this)">Save E&O</button> <span id="eSaved" class="saved"></span></div>`;
+   <div class="row c2" style="margin-bottom:8px">${field("b_rt","Routing #","")}${field("b_acct","Account #","")}</div>
+   <div class="hintbox">Attach a <b>voided check</b> or a completed direct-deposit form. <a class="dl" href="direct-deposit-form.pdf" target="_blank">Download a blank direct-deposit form</a>.</div>
+   <label class="filepick">Voided check / direct-deposit form (PDF or image)<input type="file" id="b_vc" accept=".pdf,image/*"/>${eft?`<span class="cur">On file: ${esc(eft.filename)}</span>`:''}</label>
+   <div style="margin-top:12px"><button class="btn alt" onclick="saveEft(this)">Save banking</button> <span id="bSaved" class="saved"></span></div>
+   <h2 class="sec" style="margin-top:22px">Errors & Omissions</h2>
+   <div class="row c3" style="margin:8px 0 8px">${field("e_prov","Carrier/Provider","")}${field("e_pol","Policy #","")}${field("e_exp","Expiration","","date")}</div>
+   <label class="filepick">E&O certificate / declaration page (PDF or image)<input type="file" id="e_cert" accept=".pdf,image/*"/>${eo?`<span class="cur">On file: ${esc(eo.filename)}</span>`:''}</label>
+   <div style="margin-top:12px"><button class="btn alt" onclick="saveEo(this)">Save E&O</button> <span id="eSaved" class="saved"></span></div></div>`;
 }
 async function saveEft(btn){btn.disabled=true;const g=id=>$(id).value.trim()||null;
-  const {error}=await sb.from("producer_eft").upsert({producer_id:PID,bank_name:g("b_bank"),account_type:g("b_type"),routing_number:g("b_rt"),account_number:g("b_acct"),updated_at:new Date().toISOString()});
-  btn.disabled=false;$("bSaved").textContent=error?("Error: "+error.message):"Saved ✓";$("bSaved").style.color=error?"var(--red)":"var(--green)";await loadFlags();render();go("banking");}
+  let vc=null; const f=$("b_vc"); if(f&&f.files&&f.files[0]){ try{ vc=await uploadDoc(f.files[0],"Voided Check"); }catch(e){ $("bSaved").textContent="Upload failed: "+e.message; $("bSaved").style.color="var(--red)"; btn.disabled=false; return; } }
+  const patch={producer_id:PID,bank_name:g("b_bank"),account_type:g("b_type"),routing_number:g("b_rt"),account_number:g("b_acct"),updated_at:new Date().toISOString()}; if(vc) patch.voided_check_doc_id=vc;
+  const {error}=await sb.from("producer_eft").upsert(patch);
+  btn.disabled=false;$("bSaved").textContent=error?("Error: "+error.message):"Saved ✓";$("bSaved").style.color=error?"var(--red)":"var(--green)";await loadAll();render();go("banking");}
 async function saveEo(btn){btn.disabled=true;const g=id=>$(id).value.trim()||null;
-  const {error}=await sb.from("producer_eo").insert({producer_id:PID,provider:g("e_prov"),policy_number:g("e_pol"),expiration_date:g("e_exp")});
-  btn.disabled=false;$("eSaved").textContent=error?("Error: "+error.message):"Saved ✓";$("eSaved").style.color=error?"var(--red)":"var(--green)";await loadFlags();render();go("banking");}
+  let doc=null; const f=$("e_cert"); if(f&&f.files&&f.files[0]){ try{ doc=await uploadDoc(f.files[0],"E&O"); }catch(e){ $("eSaved").textContent="Upload failed: "+e.message; $("eSaved").style.color="var(--red)"; btn.disabled=false; return; } }
+  const {error}=await sb.from("producer_eo").insert({producer_id:PID,provider:g("e_prov"),policy_number:g("e_pol"),expiration_date:g("e_exp"),doc_id:doc});
+  btn.disabled=false;$("eSaved").textContent=error?("Error: "+error.message):"Saved ✓";$("eSaved").style.color=error?"var(--red)":"var(--green)";await loadAll();render();go("banking");}
 
 function drawSignature(P){
   P.innerHTML=`<div class="card"><h2 class="sec">Sign once, submit everywhere</h2><p class="sechint">Your signature and this authorization are applied to every carrier packet you request — you won't sign each form individually.</p>
@@ -278,4 +307,8 @@ async function sign(btn){ const name=$("s_name").value.trim(); const ok=$("s_con
   btn.disabled=true;
   const {error}=await sb.from("producer_signature").upsert({producer_id:PID,signature_path:"typed:"+name,authorization_version:"v1",authorization_text:"Equita agent authorization v1",signed_at:new Date().toISOString(),consent:true,updated_at:new Date().toISOString()});
   btn.disabled=false; if(error){$("sSaved").textContent="Error: "+error.message;$("sSaved").style.color="var(--red)";return;}
-  $("sSaved").textContent="Signed ✓";$("sSaved").style
+  $("sSaved").textContent="Signed ✓";$("sSaved").style.color="var(--green)"; await loadFlags(); render(); go("signature");
+}
+</script>
+</body>
+</html>
