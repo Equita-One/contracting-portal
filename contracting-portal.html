@@ -122,7 +122,7 @@ const sb=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefr
 const $=id=>document.getElementById(id);
 const qs=new URLSearchParams(location.search);
 const AFF=qs.get("aff")||qs.get("affiliation_id")||null;
-let MODE="reg", PID=null, PRODUCER=null, FLAGS=[], PROFILE={}, ANSWERS={}, QUESTIONS=[], LICENSES=[], DOCS=[], SECTION="home";
+let MODE="reg", PID=null, PRODUCER=null, FLAGS=[], PROFILE={}, ANSWERS={}, QUESTIONS=[], LICENSES=[], DOCS=[], FINRAD={}, EMP=[], ADDR=[], TRAIN=[], SECTION="home";
 
 function setMode(m){MODE=m;$("tabReg").classList.toggle("on",m==="reg");$("tabLogin").classList.toggle("on",m==="login");$("regFields").classList.toggle("hidden",m==="login");$("authBtn").textContent=m==="reg"?"Create my account":"Send my sign-in link";$("authMsg").innerHTML="";}
 function amsg(t,ok){$("authMsg").className="msg "+(ok?"ok":"err");$("authMsg").textContent=t;}
@@ -163,6 +163,10 @@ async function loadAll(){
   const a=await sb.from("producer_disclosure_answers").select("*").eq("producer_id",PID); ANSWERS={}; (a.data||[]).forEach(r=>ANSWERS[r.question_id]=r);
   const l=await sb.from("producer_licenses").select("*").eq("producer_id",PID).order("created_at"); LICENSES=l.data||[];
   const dd=await sb.from("producer_documents").select("*").eq("producer_id",PID).order("created_at",{ascending:false}); DOCS=dd.data||[];
+  FINRAD=(await sb.from("producer_finra").select("*").eq("producer_id",PID).maybeSingle()).data||{producer_id:PID};
+  EMP=(await sb.from("producer_employment").select("*").eq("producer_id",PID).order("from_date",{ascending:false})).data||[];
+  ADDR=(await sb.from("producer_address_history").select("*").eq("producer_id",PID).order("from_date",{ascending:false})).data||[];
+  TRAIN=(await sb.from("producer_training").select("*").eq("producer_id",PID).order("completed_date",{ascending:false})).data||[];
   await loadFlags();
 }
 async function loadFlags(){ try{ FLAGS=(await sb.rpc("my_profile_flags")).data||[]; }catch(e){FLAGS=[];} }
@@ -179,8 +183,12 @@ async function uploadDoc(file, kind){
 const SECTIONS=[
   {k:"home",label:"Overview",match:[]},
   {k:"personal",label:"Personal info",match:["Profile"]},
+  {k:"dba",label:"Doing business as",match:["DBA"]},
   {k:"licenses",label:"Licenses",match:["Licenses"]},
+  {k:"finra",label:"FINRA",match:["FINRA"]},
   {k:"disclosures",label:"Background questions",match:["Disclosures"]},
+  {k:"history",label:"History",match:["History"]},
+  {k:"training",label:"CE & Training",match:["Training"]},
   {k:"banking",label:"Banking & E&O",match:["EFT","E&O"]},
   {k:"signature",label:"Sign authorization",match:["Signature"]},
 ];
@@ -201,8 +209,12 @@ function drawSection(){
   const P=$("panel");
   if(SECTION==="home"){ P.innerHTML=`<div class="card"><h2 class="sec">Welcome${PRODUCER&&PRODUCER.first_name?', '+esc(PRODUCER.first_name):''}</h2><p class="sechint">Complete each section on the left. When every dot is green you can request carrier contracts. Your details are entered once and reused on every carrier form.</p><button class="btn" onclick="go('personal')">Continue my profile →</button></div>`; return; }
   if(SECTION==="personal") return drawPersonal(P);
+  if(SECTION==="dba") return drawDBA(P);
   if(SECTION==="licenses") return drawLicenses(P);
+  if(SECTION==="finra") return drawFINRA(P);
   if(SECTION==="disclosures") return drawDisclosures(P);
+  if(SECTION==="history") return drawHistory(P);
+  if(SECTION==="training") return drawTraining(P);
   if(SECTION==="banking") return drawBanking(P);
   if(SECTION==="signature") return drawSignature(P);
 }
@@ -283,8 +295,10 @@ function drawBanking(P){
    <h2 class="sec" style="margin-top:22px">Errors & Omissions</h2>
    <div class="row c3" style="margin:8px 0 8px">${field("e_prov","Carrier/Provider","")}${field("e_pol","Policy #","")}${field("e_exp","Expiration","","date")}</div>
    <label class="filepick">E&O certificate / declaration page (PDF or image)<input type="file" id="e_cert" accept=".pdf,image/*"/>${eo?`<span class="cur">On file: ${esc(eo.filename)}</span>`:''}</label>
-   <div style="margin-top:12px"><button class="btn alt" onclick="saveEo(this)">Save E&O</button> <span id="eSaved" class="saved"></span></div></div>`;
+   <div style="margin-top:12px"><button class="btn alt" onclick="saveEo(this)">Save E&O</button> <span id="eSaved" class="saved"></span></div>
+   <div class="hintbox" style="margin-top:16px;border-color:var(--accent)"><b style="color:var(--text)">Don't have E&O coverage?</b> You can purchase a policy through our partner and it will attach to your profile automatically. <a class="dl" onclick="eoOptions()">See E&O plan options →</a></div></div>`;
 }
+function eoOptions(){ alert("E&O plan options (coming soon):\n\n• MedicareFE — Medicare, Final Expense, Mortgage Life\n• Plan A — + Life, Accident & Health, LTC / Disability\n• Plan B — + Fixed & Indexed Annuities\n• Plan C — + Variable Products & Mutual Funds\n\nIn-app purchase is being built — you'll be able to buy a policy and it will attach here automatically."); }
 async function saveEft(btn){btn.disabled=true;const g=id=>$(id).value.trim()||null;
   let vc=null; const f=$("b_vc"); if(f&&f.files&&f.files[0]){ try{ vc=await uploadDoc(f.files[0],"Voided Check"); }catch(e){ $("bSaved").textContent="Upload failed: "+e.message; $("bSaved").style.color="var(--red)"; btn.disabled=false; return; } }
   const patch={producer_id:PID,bank_name:g("b_bank"),account_type:g("b_type"),routing_number:g("b_rt"),account_number:g("b_acct"),updated_at:new Date().toISOString()}; if(vc) patch.voided_check_doc_id=vc;
@@ -294,6 +308,68 @@ async function saveEo(btn){btn.disabled=true;const g=id=>$(id).value.trim()||nul
   let doc=null; const f=$("e_cert"); if(f&&f.files&&f.files[0]){ try{ doc=await uploadDoc(f.files[0],"E&O"); }catch(e){ $("eSaved").textContent="Upload failed: "+e.message; $("eSaved").style.color="var(--red)"; btn.disabled=false; return; } }
   const {error}=await sb.from("producer_eo").insert({producer_id:PID,provider:g("e_prov"),policy_number:g("e_pol"),expiration_date:g("e_exp"),doc_id:doc});
   btn.disabled=false;$("eSaved").textContent=error?("Error: "+error.message):"Saved ✓";$("eSaved").style.color=error?"var(--red)":"var(--green)";await loadAll();render();go("banking");}
+
+function drawDBA(P){ const p=PROFILE;
+  P.innerHTML=`<div class="card"><h2 class="sec">Doing Business As</h2><p class="sechint">How you contract and get paid.</p>
+   <div style="max-width:360px;margin-bottom:14px"><label>DBA type</label><select id="d_type"><option value="">Select…</option>${["Individual","Business","LOA"].map(o=>`<option ${p.dba_type===o?"selected":""}>${o}</option>`).join("")}</select></div>
+   <label style="display:flex;gap:8px;align-items:center;text-transform:none;font-size:13px;color:var(--text);margin-bottom:8px"><input type="checkbox" id="d_sol" ${p.dba_has_solicitors?"checked":""} style="width:auto"/> I intend to have LOA solicitors underneath me</label>
+   <label style="display:flex;gap:8px;align-items:center;text-transform:none;font-size:13px;color:var(--text);margin-bottom:14px"><input type="checkbox" id="d_ac" ${p.dba_assigning_commissions?"checked":""} style="width:auto"/> Assigning commissions (where the carrier allows)</label>
+   <button class="btn" onclick="saveDBA(this)">Save</button> <span id="dbaSaved" class="saved"></span></div>`;
+}
+async function saveDBA(btn){btn.disabled=true;
+  const err=await saveProfile({dba_type:$("d_type").value||null, dba_has_solicitors:$("d_sol").checked, dba_assigning_commissions:$("d_ac").checked});
+  btn.disabled=false;$("dbaSaved").textContent=err?("Error: "+err.message):"Saved ✓";$("dbaSaved").style.color=err?"var(--red)":"var(--green)";await loadFlags();render();go("dba");}
+
+function drawFINRA(P){ const f=FINRAD;
+  P.innerHTML=`<div class="card"><h2 class="sec">FINRA</h2><p class="sechint">Required for variable-product contracting requests.</p>
+   <div class="q"><div class="qt">Are you a registered representative with FINRA or SEC?</div>
+     <div class="yn"><button class="${f.finra_registered===false?"on":""}" onclick="setFinra('finra_registered',false,this)">No</button><button class="yes ${f.finra_registered===true?"on":""}" onclick="setFinra('finra_registered',true,this)">Yes</button></div></div>
+   <div class="q"><div class="qt">Have you EVER been registered with FINRA/SEC in the past?</div>
+     <div class="yn"><button class="${f.finra_ever_registered===false?"on":""}" onclick="setFinra('finra_ever_registered',false,this)">No</button><button class="yes ${f.finra_ever_registered===true?"on":""}" onclick="setFinra('finra_ever_registered',true,this)">Yes</button></div>
+     <div id="crdwrap" class="${(f.finra_registered||f.finra_ever_registered)?"":"hidden"}" style="margin-top:10px"><label>CRD number</label><input id="f_crd" value="${esc(f.crd_number||"")}" onchange="saveFinraCrd()"/></div></div>
+   <span id="finraSaved" class="saved"></span></div>`;
+}
+async function setFinra(field,val,btn){ btn.parentElement.querySelectorAll("button").forEach(b=>b.classList.remove("on")); btn.classList.add("on");
+  FINRAD[field]=val; const patch={producer_id:PID,updated_at:new Date().toISOString()}; patch[field]=val;
+  const {error}=await sb.from("producer_finra").upsert(patch); if(error){alert(error.message);} await loadFlags(); render(); go("finra"); }
+async function saveFinraCrd(){ const v=$("f_crd").value.trim()||null; await sb.from("producer_finra").upsert({producer_id:PID,crd_number:v,updated_at:new Date().toISOString()}); FINRAD.crd_number=v; }
+
+function drawHistory(P){
+  P.innerHTML=`<div class="card"><h2 class="sec">Employment history</h2><p class="sechint">Include at least the last 5 years (jobs, education, military, unemployment).</p>
+   <div>${EMP.map(e=>`<div class="list-row"><span><b>${esc(e.position||"")}</b> — ${esc(e.company||"")} <span class="pill">${e.is_current?"Current":(esc(e.from_date||"")+" → "+esc(e.to_date||""))}</span></span></div>`).join("")||'<p class="sechint">No employment records yet.</p>'}</div>
+   <div class="row c2" style="margin:10px 0 8px">${field("em_co","Company","")}${field("em_pos","Position","")}</div>
+   <div class="row c3" style="margin-bottom:10px">${field("em_from","From","","date")}${field("em_to","To (blank = current)","","date")}${field("em_loc","Location (city, state)","")}</div>
+   <button class="btn alt" onclick="addEmp(this)">Add employment</button> <span id="empSaved" class="saved"></span>
+   <h2 class="sec" style="margin-top:22px">Address history</h2><p class="sechint">Prior addresses excluding your current residence (recommended).</p>
+   <div>${ADDR.map(a=>`<div class="list-row"><span>${esc(a.addr1||"")}, ${esc(a.city||"")} ${esc(a.state||"")} <span class="pill">${esc(a.from_date||"")} → ${esc(a.to_date||"")}</span></span></div>`).join("")||'<p class="sechint">No prior addresses added.</p>'}</div>
+   <div class="row c2" style="margin:10px 0 8px">${field("ah_a1","Street","")}${field("ah_ci","City","")}</div>
+   <div class="row c4" style="margin-bottom:10px">${field("ah_st","State","")}${field("ah_zip","ZIP","")}${field("ah_from","From","","date")}${field("ah_to","To","","date")}</div>
+   <button class="btn alt" onclick="addAddr(this)">Add address</button> <span id="ahSaved" class="saved"></span></div>`;
+}
+async function addEmp(btn){btn.disabled=true;const g=id=>$(id).value.trim()||null;
+  if(!g("em_co")||!g("em_pos")){$("empSaved").textContent="Company and position required";$("empSaved").style.color="var(--red)";btn.disabled=false;return;}
+  const {error}=await sb.from("producer_employment").insert({producer_id:PID,company:g("em_co"),position:g("em_pos"),from_date:g("em_from"),to_date:g("em_to"),is_current:!g("em_to"),location:g("em_loc")});
+  btn.disabled=false; if(error){$("empSaved").textContent="Error: "+error.message;$("empSaved").style.color="var(--red)";return;}
+  await loadAll(); render(); go("history");}
+async function addAddr(btn){btn.disabled=true;const g=id=>$(id).value.trim()||null;
+  if(!g("ah_a1")||!g("ah_ci")){$("ahSaved").textContent="Street and city required";$("ahSaved").style.color="var(--red)";btn.disabled=false;return;}
+  const {error}=await sb.from("producer_address_history").insert({producer_id:PID,addr1:g("ah_a1"),city:g("ah_ci"),state:g("ah_st"),zip:g("ah_zip"),from_date:g("ah_from"),to_date:g("ah_to")});
+  btn.disabled=false; if(error){$("ahSaved").textContent="Error: "+error.message;$("ahSaved").style.color="var(--red)";return;}
+  await loadAll(); render(); go("history");}
+
+function drawTraining(P){
+  P.innerHTML=`<div class="card"><h2 class="sec">CE & Training</h2><p class="sechint">Add your AML (Anti-Money Laundering) course — most carriers require it — plus any other certifications. Attach the certificate.</p>
+   <div>${TRAIN.map(t=>`<div class="list-row"><span><b>${esc(t.course_type||"")}</b> ${esc(t.provider||"")} <span class="pill">${esc(t.completed_date||"")}</span></span></div>`).join("")||'<p class="sechint">No courses added yet.</p>'}</div>
+   <div class="row c3" style="margin:10px 0 8px">${field("tr_type","Course type (e.g. AML)","")}${field("tr_prov","Provider (e.g. LIMRA)","")}${field("tr_done","Completed date","","date")}</div>
+   <label class="filepick">Certificate (PDF or image)<input type="file" id="tr_cert" accept=".pdf,image/*"/></label>
+   <div style="margin-top:12px"><button class="btn alt" onclick="addTrain(this)">Add course</button> <span id="trSaved" class="saved"></span></div></div>`;
+}
+async function addTrain(btn){btn.disabled=true;const g=id=>$(id).value.trim()||null;
+  if(!g("tr_type")){$("trSaved").textContent="Course type required";$("trSaved").style.color="var(--red)";btn.disabled=false;return;}
+  let doc=null; const f=$("tr_cert"); if(f&&f.files&&f.files[0]){ try{ doc=await uploadDoc(f.files[0],"Training"); }catch(e){ $("trSaved").textContent="Upload failed: "+e.message; $("trSaved").style.color="var(--red)"; btn.disabled=false; return; } }
+  const {error}=await sb.from("producer_training").insert({producer_id:PID,course_type:g("tr_type"),provider:g("tr_prov"),completed_date:g("tr_done"),doc_id:doc});
+  btn.disabled=false; if(error){$("trSaved").textContent="Error: "+error.message;$("trSaved").style.color="var(--red)";return;}
+  await loadAll(); render(); go("training");}
 
 function drawSignature(P){
   P.innerHTML=`<div class="card"><h2 class="sec">Sign once, submit everywhere</h2><p class="sechint">Your signature and this authorization are applied to every carrier packet you request — you won't sign each form individually.</p>
