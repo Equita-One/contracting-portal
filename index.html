@@ -126,6 +126,18 @@ let MODE="reg", PID=null, PRODUCER=null, FLAGS=[], PROFILE={}, ANSWERS={}, QUEST
 let CARRIERS=[], REQUESTS=[], WIZ=null;
 const CARRIER_PRODUCTS={ american_amicable:["Home Protector (Whole Life)","Golden Solution (Final Expense)","Term Made Simple","Family Protector","Senior Choice"] };
 const DEFAULT_PRODUCTS=["Whole Life","Final Expense","Term Life","Universal Life","Annuity"];
+const CARRIER_QUESTIONS={ american_amicable:[
+ {key:"q_a",label:"a.",text:"Have you ever been appointed with American-Amicable Life Insurance Company of Texas, IA American Life Insurance Company, Pioneer American Insurance Company, Pioneer Security Life Insurance Company, or Occidental Life Insurance Company of North Carolina?"},
+ {key:"q_b",label:"b.",text:"To your knowledge, are you presently the subject of any investigation or proceeding by any insurance, securities, or commodities agency, jurisdiction, or organization?"},
+ {key:"q_c",label:"c.",text:"Are you now, or have you ever been, a defendant in any litigation alleging the violation of any agreement with or provision of any insurance, securities, or commodities law or regulation?"},
+ {key:"q_d",label:"d.",text:"Has any insurance company within the past 10 years canceled any contract with you for any reason other than the nonproduction of business or at your request?"},
+ {key:"q_e",label:"e.",text:"Have you ever been convicted of a misdemeanor (other than a minor traffic offense), a felony, or violation of 18 USC 1033?"},
+ {key:"q_f",label:"f.",text:"Do you have any judgments or tax liens, bad debts, or collections items of any kind against you?"},
+ {key:"q_g",label:"g.",text:"Are you indebted to any insurance company, general agent, or manager (including debit balances)?"},
+ {key:"q_h",label:"h.",text:"Have you filed for bankruptcy under any bankruptcy act in the last 10 years?"},
+ {key:"q_i",label:"i.",text:"During the past 10 years, has any commissioner, Department of Insurance, or stock exchange suspended, canceled, or revoked any license issued to you, fined you, or refused to issue or renew any such license for any reason?"},
+ {key:"q_j",label:"j.",text:"Have you ever had any complaints, including complaints with an Insurance Department or Insurance Company, filed against you?"}
+]};
 
 function setMode(m){MODE=m;$("tabReg").classList.toggle("on",m==="reg");$("tabLogin").classList.toggle("on",m==="login");$("regFields").classList.toggle("hidden",m==="login");$("authBtn").textContent=m==="reg"?"Create my account":"Send my sign-in link";$("authMsg").innerHTML="";}
 function amsg(t,ok){$("authMsg").className="msg "+(ok?"ok":"err");$("authMsg").textContent=t;}
@@ -448,8 +460,9 @@ function drawContract(P){
    <h2 class="sec" style="margin-top:22px">My requests</h2>
    <div>${rows||'<p class="sechint">No contract requests yet.</p>'}</div></div>`;
 }
-function startWizard(){ if(!CARRIERS.length){ alert("No carriers are available yet."); return; } WIZ={step:0, carrier:CARRIERS[0].carrier_key, request_type:"contract", states:[], states_extra:"", products:[], comp_level:"", ack_questions:false, ack_questionnaire:false, submitting:false, done:null, error:null}; drawWizard($("panel")); }
+function startWizard(){ if(!CARRIERS.length){ alert("No carriers are available yet."); return; } WIZ={step:0, carrier:CARRIERS[0].carrier_key, request_type:"contract", states:[], states_extra:"", products:[], comp_level:"", carrier_answers:{}, carrier_expl:"", ack_questionnaire:false, submitting:false, done:null, error:null}; drawWizard($("panel")); }
 function cancelWizard(){ WIZ=null; render(); go("contract"); }
+function wizAns(key,val){ const e=$("w_expl"); if(e) WIZ.carrier_expl=e.value; WIZ.carrier_answers[key]=val; drawWizard($("panel")); }
 function wizSetType(t){ const c=$("w_carrier"); if(c) WIZ.carrier=c.value; WIZ.request_type=t; drawWizard($("panel")); }
 
 function drawWizard(P){
@@ -478,10 +491,15 @@ function drawWizard(P){
     body=`<div class="q"><div class="qt">Errors &amp; Omissions (E&O) coverage</div>${ok?`<p class="saved">✓ E&O certificate on file.</p>`:`<p class="sechint">No E&O certificate found. Many carriers require active E&O. Add it under <a class="dl" onclick="WIZ=null;go('banking')">Banking &amp; E&O</a>.</p><div class="hintbox">Need coverage? <a class="dl" href="https://opsfarm.calsurance.com/CONA/ProductPage/1611/3591/Landing.aspx" target="_blank" rel="noopener">Get E&O through CalSurance →</a></div>`}</div>`;
   } else if(step===4){
     const c=CARRIERS.find(x=>x.carrier_key===WIZ.carrier)||{};
-    body=`<div class="q"><div class="qt">${esc(c.carrier_name||'Carrier')} requirements</div>
-      <p class="sechint">${c.aml_required?'AML training required. ':''}${c.background_required?'Background disclosure questions required. ':''}Submission method: ${esc(c.submission_method||'email')}.</p>
-      <p class="sechint">Some background questions carry carrier-specific guidance (for example, minor traffic offenses or a single DUI may not need to be disclosed on this carrier's forms). Your answers from the Background questions section are included with this packet.</p>
-      <label style="display:flex;gap:8px;align-items:center;text-transform:none;font-size:13px;color:var(--text);margin-top:10px"><input type="checkbox" id="w_ackq" ${WIZ.ack_questions?'checked':''} style="width:auto"/> I've reviewed this carrier's requirements.</label></div>`;
+    const qs=CARRIER_QUESTIONS[WIZ.carrier]||[];
+    const anyYes=qs.some(q=>WIZ.carrier_answers[q.key]===true);
+    if(!qs.length){
+      body=`<div class="q"><div class="qt">${esc(c.carrier_name||'Carrier')} — no extra questions</div><p class="sechint">This carrier has no additional contracting questions. Continue.</p></div>`;
+    } else {
+      body=`<div class="q"><div class="qt">${esc(c.carrier_name||'Carrier')} — contracting questions</div><p class="sechint">Answer each question. These fill directly onto the carrier's contracting form. "Minor traffic offenses" do not count on question e.</p></div>`
+        + qs.map(q=>{const a=WIZ.carrier_answers[q.key];return `<div class="q"><div class="qt"><b>${q.label}</b> ${esc(q.text)}</div><div class="yn"><button class="${a===false?'on':''}" onclick="wizAns('${q.key}',false)">No</button><button class="yes ${a===true?'on':''}" onclick="wizAns('${q.key}',true)">Yes</button></div></div>`;}).join("")
+        + `<div class="q ${anyYes?'':'hidden'}" id="w_explwrap"><label>Explain any "Yes" answers (date, details) — attached to the packet</label><textarea id="w_expl" rows="3">${esc(WIZ.carrier_expl||'')}</textarea></div>`;
+    }
   } else if(step===5){
     const answered=QUESTIONS.filter(q=>ANSWERS[q.id]&&(ANSWERS[q.id].answer===true||ANSWERS[q.id].answer===false)).length;
     const yeses=QUESTIONS.filter(q=>ANSWERS[q.id]&&ANSWERS[q.id].answer===true).length;
@@ -512,7 +530,7 @@ function wizCapture(){
   const step=WIZ.step;
   if(step===0){ const c=$("w_carrier"); if(c) WIZ.carrier=c.value; }
   if(step===1){ WIZ.states=Array.from(document.querySelectorAll(".w_state:checked")).map(x=>x.value); const ex=$("w_states_extra"); WIZ.states_extra=ex?ex.value:""; WIZ.products=Array.from(document.querySelectorAll(".w_prod:checked")).map(x=>x.value); const cp=$("w_comp"); WIZ.comp_level=cp?cp.value.trim():""; }
-  if(step===4){ const a=$("w_ackq"); WIZ.ack_questions=a?a.checked:false; }
+  if(step===4){ const e=$("w_expl"); if(e) WIZ.carrier_expl=e.value; }
   if(step===5){ const a=$("w_ackqn"); WIZ.ack_questionnaire=a?a.checked:false; }
 }
 function wizBack(){ wizCapture(); WIZ.step=Math.max(0,WIZ.step-1); WIZ.error=null; drawWizard($("panel")); }
@@ -520,13 +538,16 @@ async function wizNext(){ wizCapture(); const step=WIZ.step;
   if(step===0 && !WIZ.carrier){ WIZ.error="Choose a carrier."; drawWizard($("panel")); return; }
   if(step===1 && wizAllStates().length===0){ alert("Select at least one state."); return; }
   if(step===1 && WIZ.products.length===0){ alert("Select at least one product."); return; }
-  if(step===4 && !WIZ.ack_questions){ alert("Please confirm you've reviewed the carrier requirements."); return; }
+  if(step===4){ const qs=CARRIER_QUESTIONS[WIZ.carrier]||[]; const un=qs.filter(q=>WIZ.carrier_answers[q.key]!==true&&WIZ.carrier_answers[q.key]!==false);
+    if(un.length){ alert("Please answer all "+qs.length+" carrier questions."); return; }
+    if(qs.some(q=>WIZ.carrier_answers[q.key]===true) && !(WIZ.carrier_expl||"").trim()){ alert("Please explain your “Yes” answer(s)."); return; } }
   if(step===5 && !WIZ.ack_questionnaire){ alert("Please confirm your background answers are complete and accurate."); return; }
   if(step<6){ WIZ.step++; WIZ.error=null; drawWizard($("panel")); return; }
   if(!sigOnFile()){ WIZ.error="Add your signature authorization before submitting."; drawWizard($("panel")); return; }
   WIZ.submitting=true; WIZ.error=null; drawWizard($("panel"));
   try{
-    const {data:reqId,error}=await sb.rpc("my_submit_request",{p_carrier_key:WIZ.carrier,p_request_type:WIZ.request_type,p_states:wizAllStates(),p_products:WIZ.products,p_comp_level:WIZ.comp_level||null});
+    const carrierAnswers=Object.assign({}, WIZ.carrier_answers, {explanation:WIZ.carrier_expl||"", aml_taken:amlOnFile()});
+    const {data:reqId,error}=await sb.rpc("my_submit_request",{p_carrier_key:WIZ.carrier,p_request_type:WIZ.request_type,p_states:wizAllStates(),p_products:WIZ.products,p_comp_level:WIZ.comp_level||null,p_carrier_answers:carrierAnswers});
     if(error) throw error;
     try{ await sb.functions.invoke("submit-carrier-packet",{body:{request_id:reqId}}); }catch(e){ /* request recorded; email is best-effort */ }
     const c=CARRIERS.find(x=>x.carrier_key===WIZ.carrier)||{};
