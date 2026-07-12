@@ -123,6 +123,9 @@ const $=id=>document.getElementById(id);
 const qs=new URLSearchParams(location.search);
 const AFF=qs.get("aff")||qs.get("affiliation_id")||null;
 let MODE="reg", PID=null, PRODUCER=null, FLAGS=[], PROFILE={}, ANSWERS={}, QUESTIONS=[], LICENSES=[], DOCS=[], FINRAD={}, EMP=[], ADDR=[], TRAIN=[], SIG={}, SIGURL=null, SECTION="home";
+let CARRIERS=[], REQUESTS=[], WIZ=null;
+const CARRIER_PRODUCTS={ american_amicable:["Home Protector (Whole Life)","Golden Solution (Final Expense)","Term Made Simple","Family Protector","Senior Choice"] };
+const DEFAULT_PRODUCTS=["Whole Life","Final Expense","Term Life","Universal Life","Annuity"];
 
 function setMode(m){MODE=m;$("tabReg").classList.toggle("on",m==="reg");$("tabLogin").classList.toggle("on",m==="login");$("regFields").classList.toggle("hidden",m==="login");$("authBtn").textContent=m==="reg"?"Create my account":"Send my sign-in link";$("authMsg").innerHTML="";}
 function amsg(t,ok){$("authMsg").className="msg "+(ok?"ok":"err");$("authMsg").textContent=t;}
@@ -169,6 +172,8 @@ async function loadAll(){
   TRAIN=(await sb.from("producer_training").select("*").eq("producer_id",PID).order("completed_date",{ascending:false})).data||[];
   SIG=(await sb.from("producer_signature").select("*").eq("producer_id",PID).maybeSingle()).data||{};
   SIGURL=null; if(SIG.signature_path){ try{ const su=await sb.storage.from("producer-docs").createSignedUrl(SIG.signature_path,3600); SIGURL=(su.data&&su.data.signedUrl)||null; }catch(e){} }
+  try{ CARRIERS=(await sb.from("carrier_requirements").select("carrier_key,carrier_name,aml_required,background_required,eo_min_each,submission_method").order("carrier_name")).data||[]; }catch(e){CARRIERS=[];}
+  try{ REQUESTS=(await sb.rpc("my_requests")).data||[]; }catch(e){REQUESTS=[];}
   await loadFlags();
 }
 async function loadFlags(){ try{ FLAGS=(await sb.rpc("my_profile_flags")).data||[]; }catch(e){FLAGS=[];} }
@@ -193,6 +198,7 @@ const SECTIONS=[
   {k:"training",label:"CE & Training",match:["Training"]},
   {k:"banking",label:"Banking & E&O",match:["EFT","E&O"]},
   {k:"signature",label:"Sign authorization",match:["Signature"]},
+  {k:"contract",label:"Request contracts",match:[]},
 ];
 function sectionState(sec){ const rel=FLAGS.filter(f=>sec.match.includes(f.section)); if(!sec.match.length)return ""; if(rel.some(f=>f.severity==="red"))return "bad"; if(rel.some(f=>f.severity==="yellow"))return "warn"; return "done"; }
 
@@ -219,6 +225,7 @@ function drawSection(){
   if(SECTION==="training") return drawTraining(P);
   if(SECTION==="banking") return drawBanking(P);
   if(SECTION==="signature") return drawSignature(P);
+  if(SECTION==="contract") return drawContract(P);
 }
 
 function field(id,label,val,type){return `<div><label>${label}</label><input id="${id}" type="${type||'text'}" value="${esc(val||'')}"/></div>`;}
@@ -419,6 +426,114 @@ async function uploadSigImg(inp){ const f=inp.files&&inp.files[0]; if(!f)return;
 }
 async function uploadSignedForm(inp){ const f=inp.files&&inp.files[0]; if(!f)return; if(!document.getElementById('s_consent').checked){ alert("Please check the authorization box first."); inp.value=''; return; }
   try{ await commitSignature(f, f.type||'application/pdf'); }catch(e){ alert(e.message); } await loadAll(); render(); go('signature');
+}
+
+// ============ CONTRACTING WIZARD ============
+const WIZ_STEPS=["Carrier & type","States & products","Training","E&O","Carrier questions","Questionnaire","Review & sign"];
+function amlOnFile(){ return TRAIN.some(t=>/aml|anti.?money/i.test((t.course_type||"")+" "+(t.provider||""))); }
+function eoOnFile(){ return DOCS.some(d=>d.kind==="E&O"); }
+function sigOnFile(){ return !!(SIG&&SIG.signature_path); }
+function readyToContract(){ return !FLAGS.some(f=>f.severity==="red"); }
+function stateOptions(){ const s=new Set(); LICENSES.forEach(l=>{ if(l.state) s.add(String(l.state).toUpperCase()); }); if(PROFILE.res_state) s.add(String(PROFILE.res_state).toUpperCase()); return Array.from(s).sort(); }
+function carrierProducts(key){ return CARRIER_PRODUCTS[key]||DEFAULT_PRODUCTS; }
+function carrierName(key){ const c=CARRIERS.find(x=>x.carrier_key===key); return c?c.carrier_name:key; }
+
+function drawContract(P){
+  if(WIZ){ return drawWizard(P); }
+  const ready=readyToContract();
+  const rows=REQUESTS.map(r=>{ const when=r.submitted_at?new Date(r.submitted_at).toLocaleDateString():(r.created_at?new Date(r.created_at).toLocaleDateString():''); const states=Array.isArray(r.states)?r.states.join(', '):''; return `<div class="list-row"><span><b>${esc(r.carrier_name||r.carrier_key)}</b> <span class="pill">${esc(r.stage||'')}</span> ${states?`<span class="sechint" style="display:inline">· ${esc(states)}</span>`:''}</span><span class="sechint">${when}</span></div>`; }).join("");
+  P.innerHTML=`<div class="card"><h2 class="sec">Request carrier contracts</h2>
+   <p class="sechint">Pick a carrier and we'll build and submit your appointment packet using the profile you've already completed — no re-keying.</p>
+   ${ready? `<button class="btn" onclick="startWizard()">Start a new contract request →</button>` : `<div class="gate blocked" style="margin:0"><b>Finish your profile first.</b> Complete the required (red) items in the sections on the left, then come back to request contracts.</div>`}
+   <h2 class="sec" style="margin-top:22px">My requests</h2>
+   <div>${rows||'<p class="sechint">No contract requests yet.</p>'}</div></div>`;
+}
+function startWizard(){ if(!CARRIERS.length){ alert("No carriers are available yet."); return; } WIZ={step:0, carrier:CARRIERS[0].carrier_key, request_type:"contract", states:[], states_extra:"", products:[], comp_level:"", ack_questions:false, ack_questionnaire:false, submitting:false, done:null, error:null}; drawWizard($("panel")); }
+function cancelWizard(){ WIZ=null; render(); go("contract"); }
+function wizSetType(t){ const c=$("w_carrier"); if(c) WIZ.carrier=c.value; WIZ.request_type=t; drawWizard($("panel")); }
+
+function drawWizard(P){
+  const step=WIZ.step;
+  if(WIZ.done){ P.innerHTML=`<div class="card"><h2 class="sec">Request submitted ✓</h2><p class="sechint">Your ${esc(WIZ.done.carrier_name)} contracting request has been submitted to our contracting team and a copy emailed to you. Track its status under “My requests.”</p><button class="btn" onclick="cancelWizard()">Done</button></div>`; return; }
+  const prog=WIZ_STEPS.map((s,i)=>`<span class="pill" style="${i===step?'background:var(--accent);color:#fff;border-color:var(--accent)':(i<step?'color:var(--green);border-color:var(--green)':'')}">${i+1}. ${esc(s)}</span>`).join(" ");
+  const csel=CARRIERS.map(c=>`<option value="${esc(c.carrier_key)}" ${c.carrier_key===WIZ.carrier?'selected':''}>${esc(c.carrier_name)}</option>`).join("");
+  let body="";
+  if(step===0){
+    body=`<label>Carrier</label><select id="w_carrier" onchange="WIZ.carrier=this.value">${csel}</select>
+     <label style="margin-top:12px">Request type</label>
+     <div class="yn" style="margin-top:4px"><button class="${WIZ.request_type==='contract'?'on':''}" onclick="wizSetType('contract')">New contract</button><button class="${WIZ.request_type==='add_state'?'on':''}" onclick="wizSetType('add_state')">Add state(s)</button></div>`;
+  } else if(step===1){
+    const opts=stateOptions();
+    const stateBoxes=opts.length? opts.map(s=>`<label style="display:inline-flex;gap:6px;align-items:center;text-transform:none;color:var(--text);font-size:13px;margin:0 12px 8px 0"><input type="checkbox" class="w_state" value="${s}" ${WIZ.states.includes(s)?'checked':''} style="width:auto"/> ${s}</label>`).join("") : '<p class="sechint">No licensed states found — add licenses under Licenses, or type states below.</p>';
+    const prods=carrierProducts(WIZ.carrier).map(p=>`<label style="display:inline-flex;gap:6px;align-items:center;text-transform:none;color:var(--text);font-size:13px;margin:0 12px 8px 0"><input type="checkbox" class="w_prod" value="${esc(p)}" ${WIZ.products.includes(p)?'checked':''} style="width:auto"/> ${esc(p)}</label>`).join("");
+    body=`<label>States to appoint in</label><div style="margin:6px 0 8px">${stateBoxes}</div>
+     <label>Other states (comma-separated)</label><input id="w_states_extra" placeholder="e.g. TX, FL" value="${esc(WIZ.states_extra||'')}"/>
+     <label style="margin-top:14px">Products</label><div style="margin:6px 0 8px">${prods}</div>
+     <label>Requested contract level (optional)</label><input id="w_comp" placeholder="e.g. Street, 100% — or leave blank" value="${esc(WIZ.comp_level||'')}"/>`;
+  } else if(step===2){
+    const ok=amlOnFile();
+    body=`<div class="q"><div class="qt">Anti-Money Laundering (AML) training</div>${ok?`<p class="saved">✓ AML course on file — you're set.</p>`:`<p class="sechint">No AML course found on your profile. Most carriers (including this one) require current AML training. It's strongly recommended you add it under <a class="dl" onclick="WIZ=null;go('training')">CE &amp; Training</a> before submitting.</p><div class="hintbox">Complete AML at <a class="dl" href="https://www.limra.com/" target="_blank" rel="noopener">LIMRA →</a></div>`}</div>`;
+  } else if(step===3){
+    const ok=eoOnFile();
+    body=`<div class="q"><div class="qt">Errors &amp; Omissions (E&O) coverage</div>${ok?`<p class="saved">✓ E&O certificate on file.</p>`:`<p class="sechint">No E&O certificate found. Many carriers require active E&O. Add it under <a class="dl" onclick="WIZ=null;go('banking')">Banking &amp; E&O</a>.</p><div class="hintbox">Need coverage? <a class="dl" href="https://opsfarm.calsurance.com/CONA/ProductPage/1611/3591/Landing.aspx" target="_blank" rel="noopener">Get E&O through CalSurance →</a></div>`}</div>`;
+  } else if(step===4){
+    const c=CARRIERS.find(x=>x.carrier_key===WIZ.carrier)||{};
+    body=`<div class="q"><div class="qt">${esc(c.carrier_name||'Carrier')} requirements</div>
+      <p class="sechint">${c.aml_required?'AML training required. ':''}${c.background_required?'Background disclosure questions required. ':''}Submission method: ${esc(c.submission_method||'email')}.</p>
+      <p class="sechint">Some background questions carry carrier-specific guidance (for example, minor traffic offenses or a single DUI may not need to be disclosed on this carrier's forms). Your answers from the Background questions section are included with this packet.</p>
+      <label style="display:flex;gap:8px;align-items:center;text-transform:none;font-size:13px;color:var(--text);margin-top:10px"><input type="checkbox" id="w_ackq" ${WIZ.ack_questions?'checked':''} style="width:auto"/> I've reviewed this carrier's requirements.</label></div>`;
+  } else if(step===5){
+    const answered=QUESTIONS.filter(q=>ANSWERS[q.id]&&(ANSWERS[q.id].answer===true||ANSWERS[q.id].answer===false)).length;
+    const yeses=QUESTIONS.filter(q=>ANSWERS[q.id]&&ANSWERS[q.id].answer===true).length;
+    body=`<div class="q"><div class="qt">Background questionnaire</div>
+      <p class="sechint">${answered}/${QUESTIONS.length} questions answered${yeses?`, ${yeses} answered “Yes” (explanations attached)`:''}. These carry over from the Background questions section.</p>
+      ${answered<QUESTIONS.length?`<p class="sechint" style="color:var(--yellow)">Some questions are unanswered — please complete them under <a class="dl" onclick="WIZ=null;go('disclosures')">Background questions</a>.</p>`:''}
+      <label style="display:flex;gap:8px;align-items:center;text-transform:none;font-size:13px;color:var(--text);margin-top:10px"><input type="checkbox" id="w_ackqn" ${WIZ.ack_questionnaire?'checked':''} style="width:auto"/> My answers are complete and accurate.</label></div>`;
+  } else if(step===6){
+    const c=CARRIERS.find(x=>x.carrier_key===WIZ.carrier)||{};
+    const allStates=wizAllStates();
+    body=`<div class="q"><div class="qt">Review</div>
+      <div class="list-row"><span>Carrier</span><span><b>${esc(c.carrier_name||WIZ.carrier)}</b></span></div>
+      <div class="list-row"><span>Request type</span><span>${WIZ.request_type==='contract'?'New contract':'Add state(s)'}</span></div>
+      <div class="list-row"><span>States</span><span>${allStates.length?esc(allStates.join(', ')):'<span class="sechint">none selected</span>'}</span></div>
+      <div class="list-row"><span>Products</span><span>${WIZ.products.length?esc(WIZ.products.join(', ')):'<span class="sechint">none selected</span>'}</span></div>
+      <div class="list-row"><span>Contract level</span><span>${esc(WIZ.comp_level||'—')}</span></div>
+     </div>
+     <div class="q"><div class="qt">Signature</div>${sigOnFile()&&SIGURL?`<div style="background:#fff;border-radius:8px;padding:8px;display:inline-block;border:1px solid var(--line)"><img src="${SIGURL}" style="max-height:70px;max-width:280px"/></div><p class="saved" style="margin-top:6px">✓ Your signature authorization is on file and will be applied to this packet.</p>`:`<p class="sechint" style="color:var(--red)">No signature on file — add one under <a class="dl" onclick="WIZ=null;go('signature')">Sign authorization</a> before submitting.</p>`}</div>
+     ${WIZ.error?`<div class="gate blocked" style="margin:8px 0">${esc(WIZ.error)}</div>`:''}`;
+  }
+  const backBtn=step>0?`<button class="btn alt" onclick="wizBack()">← Back</button>`:`<button class="btn alt" onclick="cancelWizard()">Cancel</button>`;
+  const nextLabel=step===6?(WIZ.submitting?'Submitting…':'Submit request'):'Next →';
+  const nextBtn=`<button class="btn" ${WIZ.submitting?'disabled':''} onclick="wizNext()">${nextLabel}</button>`;
+  P.innerHTML=`<div class="card"><h2 class="sec">New contract request</h2><div style="margin:8px 0 16px;display:flex;flex-wrap:wrap;gap:6px">${prog}</div>${body}<div style="margin-top:18px;display:flex;gap:10px;justify-content:space-between">${backBtn}${nextBtn}</div></div>`;
+}
+function wizAllStates(){ const s=new Set(WIZ.states.map(x=>x.toUpperCase())); (WIZ.states_extra||'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean).forEach(x=>s.add(x)); return Array.from(s); }
+function wizCapture(){
+  const step=WIZ.step;
+  if(step===0){ const c=$("w_carrier"); if(c) WIZ.carrier=c.value; }
+  if(step===1){ WIZ.states=Array.from(document.querySelectorAll(".w_state:checked")).map(x=>x.value); const ex=$("w_states_extra"); WIZ.states_extra=ex?ex.value:""; WIZ.products=Array.from(document.querySelectorAll(".w_prod:checked")).map(x=>x.value); const cp=$("w_comp"); WIZ.comp_level=cp?cp.value.trim():""; }
+  if(step===4){ const a=$("w_ackq"); WIZ.ack_questions=a?a.checked:false; }
+  if(step===5){ const a=$("w_ackqn"); WIZ.ack_questionnaire=a?a.checked:false; }
+}
+function wizBack(){ wizCapture(); WIZ.step=Math.max(0,WIZ.step-1); WIZ.error=null; drawWizard($("panel")); }
+async function wizNext(){ wizCapture(); const step=WIZ.step;
+  if(step===0 && !WIZ.carrier){ WIZ.error="Choose a carrier."; drawWizard($("panel")); return; }
+  if(step===1 && wizAllStates().length===0){ alert("Select at least one state."); return; }
+  if(step===1 && WIZ.products.length===0){ alert("Select at least one product."); return; }
+  if(step===4 && !WIZ.ack_questions){ alert("Please confirm you've reviewed the carrier requirements."); return; }
+  if(step===5 && !WIZ.ack_questionnaire){ alert("Please confirm your background answers are complete and accurate."); return; }
+  if(step<6){ WIZ.step++; WIZ.error=null; drawWizard($("panel")); return; }
+  if(!sigOnFile()){ WIZ.error="Add your signature authorization before submitting."; drawWizard($("panel")); return; }
+  WIZ.submitting=true; WIZ.error=null; drawWizard($("panel"));
+  try{
+    const {data:reqId,error}=await sb.rpc("my_submit_request",{p_carrier_key:WIZ.carrier,p_request_type:WIZ.request_type,p_states:wizAllStates(),p_products:WIZ.products,p_comp_level:WIZ.comp_level||null});
+    if(error) throw error;
+    try{ await sb.functions.invoke("submit-carrier-packet",{body:{request_id:reqId}}); }catch(e){ /* request recorded; email is best-effort */ }
+    const c=CARRIERS.find(x=>x.carrier_key===WIZ.carrier)||{};
+    WIZ.done={carrier_name:c.carrier_name||WIZ.carrier};
+    await loadAll();
+    drawWizard($("panel"));
+  }catch(e){ WIZ.submitting=false; WIZ.error=(e&&e.message)||String(e); drawWizard($("panel")); }
 }
 </script>
 </body>
