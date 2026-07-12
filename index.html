@@ -311,6 +311,8 @@ function drawBanking(P){
    <h2 class="sec" style="margin-top:8px">EFT</h2>
    <div class="row c2" style="margin:8px 0 12px">${field("b_bank","Bank name","")}${field("b_type","Account type (Checking/Savings)","")}</div>
    <div class="row c2" style="margin-bottom:8px">${field("b_rt","Routing #","")}${field("b_acct","Account #","")}</div>
+   <div class="row c2" style="margin-bottom:8px">${field("b_baddr","Bank street address","")}${field("b_bcity","Bank city","")}</div>
+   <div class="row c2" style="margin-bottom:8px">${field("b_bstate","Bank state","")}${field("b_bzip","Bank ZIP","")}</div>
    <div class="hintbox">Attach a <b>voided check</b> or a completed direct-deposit form. <a class="dl" href="direct-deposit-form.pdf" target="_blank">Download a blank direct-deposit form</a>.</div>
    <label class="filepick">Voided check / direct-deposit form (PDF or image)<input type="file" id="b_vc" accept=".pdf,image/*"/>${eft?`<span class="cur">On file: ${esc(eft.filename)}</span>`:''}</label>
    <div style="margin-top:12px"><button class="btn alt" onclick="saveEft(this)">Save banking</button> <span id="bSaved" class="saved"></span></div>
@@ -322,7 +324,7 @@ function drawBanking(P){
 }
 async function saveEft(btn){btn.disabled=true;const g=id=>$(id).value.trim()||null;
   let vc=null; const f=$("b_vc"); if(f&&f.files&&f.files[0]){ try{ vc=await uploadDoc(f.files[0],"Voided Check"); }catch(e){ $("bSaved").textContent="Upload failed: "+e.message; $("bSaved").style.color="var(--red)"; btn.disabled=false; return; } }
-  const patch={producer_id:PID,bank_name:g("b_bank"),account_type:g("b_type"),routing_number:g("b_rt"),account_number:g("b_acct"),updated_at:new Date().toISOString()}; if(vc) patch.voided_check_doc_id=vc;
+  const patch={producer_id:PID,bank_name:g("b_bank"),account_type:g("b_type"),routing_number:g("b_rt"),account_number:g("b_acct"),bank_address:g("b_baddr"),bank_city:g("b_bcity"),bank_state:g("b_bstate"),bank_zip:g("b_bzip"),updated_at:new Date().toISOString()}; if(vc) patch.voided_check_doc_id=vc;
   const {error}=await sb.from("producer_eft").upsert(patch);
   btn.disabled=false;$("bSaved").textContent=error?("Error: "+error.message):"Saved ✓";$("bSaved").style.color=error?"var(--red)":"var(--green)";await loadAll();render();go("banking");}
 async function saveEo(btn){btn.disabled=true;const g=id=>$(id).value.trim()||null;
@@ -332,13 +334,14 @@ async function saveEo(btn){btn.disabled=true;const g=id=>$(id).value.trim()||nul
 
 function drawDBA(P){ const p=PROFILE;
   P.innerHTML=`<div class="card"><h2 class="sec">Doing Business As</h2><p class="sechint">How you contract and get paid.</p>
-   <div style="max-width:360px;margin-bottom:14px"><label>DBA type</label><select id="d_type"><option value="">Select…</option>${["Individual","Business","LOA"].map(o=>`<option ${p.dba_type===o?"selected":""}>${o}</option>`).join("")}</select></div>
+   <div style="max-width:360px;margin-bottom:12px"><label>DBA type</label><select id="d_type"><option value="">Select…</option>${["Individual","Business","LLC","Corporation","S-Corp","Partnership","LOA"].map(o=>`<option ${p.dba_type===o?"selected":""}>${o}</option>`).join("")}</select></div>
+   <div class="row c2" style="margin-bottom:14px">${field("d_bizname","Business / entity name (if any)",p.business_name)}${field("d_tin","EIN / Tax ID (if a business)",p.tin)}</div>
    <label style="display:flex;gap:8px;align-items:center;text-transform:none;font-size:13px;color:var(--text);margin-bottom:8px"><input type="checkbox" id="d_sol" ${p.dba_has_solicitors?"checked":""} style="width:auto"/> I intend to have LOA solicitors underneath me</label>
    <label style="display:flex;gap:8px;align-items:center;text-transform:none;font-size:13px;color:var(--text);margin-bottom:14px"><input type="checkbox" id="d_ac" ${p.dba_assigning_commissions?"checked":""} style="width:auto"/> Assigning commissions (where the carrier allows)</label>
    <button class="btn" onclick="saveDBA(this)">Save</button> <span id="dbaSaved" class="saved"></span></div>`;
 }
 async function saveDBA(btn){btn.disabled=true;
-  const err=await saveProfile({dba_type:$("d_type").value||null, dba_has_solicitors:$("d_sol").checked, dba_assigning_commissions:$("d_ac").checked});
+  const err=await saveProfile({dba_type:$("d_type").value||null, business_name:$("d_bizname").value.trim()||null, tin:$("d_tin").value.trim()||null, dba_has_solicitors:$("d_sol").checked, dba_assigning_commissions:$("d_ac").checked});
   btn.disabled=false;$("dbaSaved").textContent=err?("Error: "+err.message):"Saved ✓";$("dbaSaved").style.color=err?"var(--red)":"var(--green)";await loadFlags();render();go("dba");}
 
 function drawFINRA(P){ const f=FINRAD;
@@ -460,9 +463,10 @@ function drawContract(P){
    <h2 class="sec" style="margin-top:22px">My requests</h2>
    <div>${rows||'<p class="sechint">No contract requests yet.</p>'}</div></div>`;
 }
-function startWizard(){ if(!CARRIERS.length){ alert("No carriers are available yet."); return; } WIZ={step:0, carrier:CARRIERS[0].carrier_key, request_type:"contract", states:[], states_extra:"", products:[], comp_level:"", carrier_answers:{}, carrier_expl:"", ack_questionnaire:false, submitting:false, done:null, error:null}; drawWizard($("panel")); }
+function startWizard(){ if(!CARRIERS.length){ alert("No carriers are available yet."); return; } WIZ={step:0, carrier:CARRIERS[0].carrier_key, request_type:"contract", states:[], states_extra:"", products:[], comp_level:"", carrier_answers:{}, carrier_expl:"", aml_through:"limra", ack_questionnaire:false, submitting:false, done:null, error:null}; drawWizard($("panel")); }
 function cancelWizard(){ WIZ=null; render(); go("contract"); }
 function wizAns(key,val){ const e=$("w_expl"); if(e) WIZ.carrier_expl=e.value; WIZ.carrier_answers[key]=val; drawWizard($("panel")); }
+function wizAml(v){ WIZ.aml_through=v; drawWizard($("panel")); }
 function wizSetType(t){ const c=$("w_carrier"); if(c) WIZ.carrier=c.value; WIZ.request_type=t; drawWizard($("panel")); }
 
 function drawWizard(P){
@@ -484,8 +488,10 @@ function drawWizard(P){
      <label style="margin-top:14px">Products</label><div style="margin:6px 0 8px">${prods}</div>
      <label>Requested contract level (optional)</label><input id="w_comp" placeholder="e.g. Street, 100% — or leave blank" value="${esc(WIZ.comp_level||'')}"/>`;
   } else if(step===2){
-    const ok=amlOnFile();
-    body=`<div class="q"><div class="qt">Anti-Money Laundering (AML) training</div>${ok?`<p class="saved">✓ AML course on file — you're set.</p>`:`<p class="sechint">No AML course found on your profile. Most carriers (including this one) require current AML training. It's strongly recommended you add it under <a class="dl" onclick="WIZ=null;go('training')">CE &amp; Training</a> before submitting.</p><div class="hintbox">Complete AML at <a class="dl" href="https://www.limra.com/" target="_blank" rel="noopener">LIMRA →</a></div>`}</div>`;
+    const ok=amlOnFile(); const at=WIZ.aml_through||'limra'; const cn=carrierName(WIZ.carrier);
+    body=`<div class="q"><div class="qt">Anti-Money Laundering (AML) training</div>${ok?`<p class="saved">✓ AML course on file — you're set.</p>
+      <label style="margin-top:10px">Which AML course did you take? <span class="muted" style="text-transform:none">(marked on this carrier's form)</span></label>
+      <div class="yn" style="margin-top:4px;flex-wrap:wrap"><button class="${at==='our'?'on':''}" onclick="wizAml('our')">Our Company (${esc(cn)})</button><button class="${at==='other'?'on':''}" onclick="wizAml('other')">Other Company</button><button class="${at==='limra'?'on':''}" onclick="wizAml('limra')">LIMRA</button></div>`:`<p class="sechint">No AML course found on your profile. Most carriers (including this one) require current AML training. It's strongly recommended you add it under <a class="dl" onclick="WIZ=null;go('training')">CE &amp; Training</a> before submitting.</p><div class="hintbox">Complete AML at <a class="dl" href="https://www.limra.com/" target="_blank" rel="noopener">LIMRA →</a></div>`}</div>`;
   } else if(step===3){
     const ok=eoOnFile();
     body=`<div class="q"><div class="qt">Errors &amp; Omissions (E&O) coverage</div>${ok?`<p class="saved">✓ E&O certificate on file.</p>`:`<p class="sechint">No E&O certificate found. Many carriers require active E&O. Add it under <a class="dl" onclick="WIZ=null;go('banking')">Banking &amp; E&O</a>.</p><div class="hintbox">Need coverage? <a class="dl" href="https://opsfarm.calsurance.com/CONA/ProductPage/1611/3591/Landing.aspx" target="_blank" rel="noopener">Get E&O through CalSurance →</a></div>`}</div>`;
@@ -546,7 +552,7 @@ async function wizNext(){ wizCapture(); const step=WIZ.step;
   if(!sigOnFile()){ WIZ.error="Add your signature authorization before submitting."; drawWizard($("panel")); return; }
   WIZ.submitting=true; WIZ.error=null; drawWizard($("panel"));
   try{
-    const carrierAnswers=Object.assign({}, WIZ.carrier_answers, {explanation:WIZ.carrier_expl||"", aml_taken:amlOnFile()});
+    const carrierAnswers=Object.assign({}, WIZ.carrier_answers, {explanation:WIZ.carrier_expl||"", aml_taken:amlOnFile(), aml_through:WIZ.aml_through||"limra"});
     const {data:reqId,error}=await sb.rpc("my_submit_request",{p_carrier_key:WIZ.carrier,p_request_type:WIZ.request_type,p_states:wizAllStates(),p_products:WIZ.products,p_comp_level:WIZ.comp_level||null,p_carrier_answers:carrierAnswers});
     if(error) throw error;
     try{ await sb.functions.invoke("submit-carrier-packet",{body:{request_id:reqId}}); }catch(e){ /* request recorded; email is best-effort */ }
