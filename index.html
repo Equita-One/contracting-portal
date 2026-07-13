@@ -118,7 +118,12 @@ h2.sec{font-size:16px;margin:0 0 4px}
 <script>
 const SB_URL="https://tcivqllwxodihiphhknp.supabase.co";
 const SB_KEY="sb_publishable_dwkJS210Aqbe77Wlq6wmvQ_kTjIqBt2";
-const sb=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+let sb;
+let _sessDead=false,_refreshP=null;
+async function _refreshOnce(){ if(!_refreshP) _refreshP=sb.auth.refreshSession(); let r; try{ r=await _refreshP; }catch(e){ r={data:null,error:e}; } _refreshP=null; return r; }
+function onSessionExpired(){ if(_sessDead)return; _sessDead=true; try{$("app").style.display="none";$("auth").classList.remove("hidden");}catch(e){} try{setMode("login");}catch(e){} try{amsg("Your sign-in expired. Enter your email below for a new secure link, then continue where you left off.");}catch(e){} }
+async function guardedFetch(input,init){ init=init||{}; const url=(typeof input==="string")?input:((input&&input.url)||""); let res=await fetch(input,init); if(url.indexOf("/auth/v1/")>=0) return res; if(res.status===401||res.status===403){ let body=""; try{body=await res.clone().text();}catch(e){} const authish=(res.status===401)||/row-level security|JWT|jwt|not authenticated|invalid claim|token/i.test(body); if(authish){ const rr=await _refreshOnce(); if(rr&&!rr.error&&rr.data&&rr.data.session&&rr.data.session.access_token){ _sessDead=false; try{ const h=new Headers(init.headers||{}); h.set("Authorization","Bearer "+rr.data.session.access_token); res=await fetch(input,Object.assign({},init,{headers:h})); }catch(e){} } else { onSessionExpired(); } } } return res; }
+sb=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true},global:{fetch:guardedFetch}});
 const $=id=>document.getElementById(id);
 const qs=new URLSearchParams(location.search);
 const AFF=qs.get("aff")||qs.get("affiliation_id")||null;
@@ -164,8 +169,11 @@ sb.auth.onAuthStateChange((_e,session)=>{ if(session) enterApp(); });
 
 async function enterApp(){
   $("auth").classList.add("hidden"); $("app").style.display="block";
-  const {data:{user}}=await sb.auth.getUser();
-  $("who").textContent=user?user.email:"";
+  let user=null; try{ user=(await sb.auth.getUser()).data.user; }catch(e){}
+  if(!user){ const r=await _refreshOnce(); if(r&&r.data&&r.data.session){ try{ user=(await sb.auth.getUser()).data.user; }catch(e){} } }
+  if(!user){ onSessionExpired(); return; }
+  _sessDead=false;
+  $("who").textContent=user.email;
   await loadAll(); render();
 }
 async function loadAll(){
