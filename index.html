@@ -93,7 +93,7 @@ h2.sec{font-size:16px;margin:0 0 4px}
       </div>
     </div>
     <div style="margin-bottom:12px"><label>Email</label><input id="email" type="email" placeholder="you@example.com" autocomplete="username"/></div>
-    <div style="margin-bottom:12px"><label>Password</label><input id="pass" type="password" placeholder="At least 8 characters" autocomplete="current-password" onkeydown="if(event.key==='Enter')doAuth()"/></div>
+    <div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:center"><label>Password</label><a href="#" id="pwToggle" onclick="togglePw();return false;" style="color:var(--accent2);font-size:12px;text-decoration:none">Show</a></div><input id="pass" type="password" placeholder="At least 8 characters" autocomplete="current-password" onkeydown="if(event.key==='Enter')doAuth()"/></div>
     <div id="regPass2" style="margin-bottom:12px"><label>Confirm password</label><input id="pass2" type="password" autocomplete="new-password" onkeydown="if(event.key==='Enter')doAuth()"/></div>
     <button class="btn" style="width:100%" id="authBtn" onclick="doAuth()">Create my account</button>
     <div id="authMsg"></div>
@@ -102,7 +102,7 @@ h2.sec{font-size:16px;margin:0 0 4px}
     </div>
     <div id="pwReset" class="hidden">
       <h1 style="font-size:16px;margin:4px 0 12px">Set a new password</h1>
-      <div style="margin-bottom:12px"><label>New password</label><input id="npass" type="password" placeholder="At least 8 characters" autocomplete="new-password" onkeydown="if(event.key==='Enter')setNewPw()"/></div>
+      <div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:center"><label>New password</label><a href="#" id="npToggle" onclick="toggleNp();return false;" style="color:var(--accent2);font-size:12px;text-decoration:none">Show</a></div><input id="npass" type="password" placeholder="At least 8 characters" autocomplete="new-password" onkeydown="if(event.key==='Enter')setNewPw()"/></div>
       <button class="btn" style="width:100%" onclick="setNewPw()">Save new password</button>
       <div id="pwResetMsg"></div>
     </div>
@@ -203,6 +203,8 @@ async function setNewPw(){
 }
 async function signOut(){await sb.auth.signOut();location.reload();}
 function esc(s){return (s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function togglePw(){ const show=$("pass").type==="password"; ["pass","pass2"].forEach(id=>{const el=$(id); if(el) el.type=show?"text":"password";}); const t=$("pwToggle"); if(t) t.textContent=show?"Hide":"Show"; }
+function toggleNp(){ const el=$("npass"); const show=el.type==="password"; el.type=show?"text":"password"; const t=$("npToggle"); if(t) t.textContent=show?"Hide":"Show"; }
 
 // ---------- boot ----------
 let RECOVERY = (location.hash.indexOf("type=recovery")>=0);
