@@ -77,6 +77,7 @@ h2.sec{font-size:16px;margin:0 0 4px}
   <div class="authcard card">
     <div class="brand"><div class="logo"></div><h1>Equita Contracting</h1></div>
     <div class="sub" id="authSub">Agent onboarding &amp; carrier contracting</div>
+    <div id="authNormal">
     <div class="tabs">
       <button id="tabReg" class="on" onclick="setMode('reg')">Register</button>
       <button id="tabLogin" onclick="setMode('login')">Sign in</button>
@@ -91,10 +92,20 @@ h2.sec{font-size:16px;margin:0 0 4px}
         <div><label>Mobile phone</label><input id="rPhone"/></div>
       </div>
     </div>
-    <div style="margin-bottom:12px"><label>Email</label><input id="email" type="email" placeholder="you@example.com"/></div>
-    <button class="btn" style="width:100%" id="authBtn" onclick="doAuth()">Send my secure link</button>
+    <div style="margin-bottom:12px"><label>Email</label><input id="email" type="email" placeholder="you@example.com" autocomplete="username"/></div>
+    <div style="margin-bottom:12px"><label>Password</label><input id="pass" type="password" placeholder="At least 8 characters" autocomplete="current-password" onkeydown="if(event.key==='Enter')doAuth()"/></div>
+    <div id="regPass2" style="margin-bottom:12px"><label>Confirm password</label><input id="pass2" type="password" autocomplete="new-password" onkeydown="if(event.key==='Enter')doAuth()"/></div>
+    <button class="btn" style="width:100%" id="authBtn" onclick="doAuth()">Create my account</button>
     <div id="authMsg"></div>
-    <div class="sub" style="margin-top:14px">We email you a one-time secure link — no password to remember. You can add a password and two-factor security once you're in.</div>
+    <div id="forgotWrap" class="hidden" style="margin-top:10px;text-align:center"><a href="#" onclick="forgotPw();return false;" style="color:var(--accent2);font-size:13px;text-decoration:none">Forgot your password?</a></div>
+    <div class="sub" style="margin-top:14px">Sign in with your email and a password you choose — no email link required.</div>
+    </div>
+    <div id="pwReset" class="hidden">
+      <h1 style="font-size:16px;margin:4px 0 12px">Set a new password</h1>
+      <div style="margin-bottom:12px"><label>New password</label><input id="npass" type="password" placeholder="At least 8 characters" autocomplete="new-password" onkeydown="if(event.key==='Enter')setNewPw()"/></div>
+      <button class="btn" style="width:100%" onclick="setNewPw()">Save new password</button>
+      <div id="pwResetMsg"></div>
+    </div>
   </div>
 </div>
 
@@ -121,7 +132,7 @@ const SB_KEY="sb_publishable_dwkJS210Aqbe77Wlq6wmvQ_kTjIqBt2";
 let sb;
 let _sessDead=false,_refreshP=null;
 async function _refreshOnce(){ if(!_refreshP) _refreshP=sb.auth.refreshSession(); let r; try{ r=await _refreshP; }catch(e){ r={data:null,error:e}; } _refreshP=null; return r; }
-function onSessionExpired(){ if(_sessDead)return; _sessDead=true; try{$("app").style.display="none";$("auth").classList.remove("hidden");}catch(e){} try{setMode("login");}catch(e){} try{amsg("Your sign-in expired. Enter your email below for a new secure link, then continue where you left off.");}catch(e){} }
+function onSessionExpired(){ if(_sessDead)return; _sessDead=true; try{$("app").style.display="none";$("auth").classList.remove("hidden");}catch(e){} try{setMode("login");}catch(e){} try{amsg("Your sign-in expired. Please sign in again with your email and password.");}catch(e){} }
 async function guardedFetch(input,init){ init=init||{}; const url=(typeof input==="string")?input:((input&&input.url)||""); let res=await fetch(input,init); if(url.indexOf("/auth/v1/")>=0) return res; if(res.status===401||res.status===403){ let body=""; try{body=await res.clone().text();}catch(e){} const authish=(res.status===401)||/row-level security|JWT|jwt|not authenticated|invalid claim|token/i.test(body); if(authish){ const rr=await _refreshOnce(); if(rr&&!rr.error&&rr.data&&rr.data.session&&rr.data.session.access_token){ _sessDead=false; try{ const h=new Headers(init.headers||{}); h.set("Authorization","Bearer "+rr.data.session.access_token); res=await fetch(input,Object.assign({},init,{headers:h})); }catch(e){} } else { onSessionExpired(); } } } return res; }
 sb=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true},global:{fetch:guardedFetch}});
 const $=id=>document.getElementById(id);
@@ -144,28 +155,59 @@ const CARRIER_QUESTIONS={ american_amicable:[
  {key:"q_j",label:"j.",text:"Have you ever had any complaints, including complaints with an Insurance Department or Insurance Company, filed against you?"}
 ]};
 
-function setMode(m){MODE=m;$("tabReg").classList.toggle("on",m==="reg");$("tabLogin").classList.toggle("on",m==="login");$("regFields").classList.toggle("hidden",m==="login");$("authBtn").textContent=m==="reg"?"Create my account":"Send my sign-in link";$("authMsg").innerHTML="";}
+function setMode(m){MODE=m;$("tabReg").classList.toggle("on",m==="reg");$("tabLogin").classList.toggle("on",m==="login");$("regFields").classList.toggle("hidden",m==="login");$("regPass2").classList.toggle("hidden",m==="login");$("forgotWrap").classList.toggle("hidden",m==="reg");$("pass").setAttribute("autocomplete",m==="reg"?"new-password":"current-password");$("authBtn").textContent=m==="reg"?"Create my account":"Sign in";$("authMsg").innerHTML="";}
 function amsg(t,ok){$("authMsg").className="msg "+(ok?"ok":"err");$("authMsg").textContent=t;}
 
 async function initAff(){ if(!AFF)return; try{const{data}=await sb.rpc("affiliation_public_info",{p_affiliation_id:Number(AFF)}); if(data&&data.name){$("authSub").innerHTML="You're registering with <b style='color:var(--text)'>"+esc(data.name)+"</b>";}}catch(e){} }
 
 async function doAuth(){
-  const email=$("email").value.trim(); if(!email){amsg("Enter your email.");return;}
+  const email=$("email").value.trim().toLowerCase(); const password=$("pass").value;
+  if(!email){amsg("Enter your email.");return;}
+  if(!password){amsg("Enter your password.");return;}
   $("authBtn").disabled=true;
-  const data={portal:"agent"};
-  if(AFF) data.affiliation_id=String(AFF);
-  if(MODE==="reg"){ data.first_name=$("rFirst").value.trim(); data.last_name=$("rLast").value.trim(); data.npn=$("rNpn").value.trim(); data.phone=$("rPhone").value.trim(); }
-  const {error}=await sb.auth.signInWithOtp({email,options:{shouldCreateUser:true,data,emailRedirectTo:location.origin+location.pathname}});
-  $("authBtn").disabled=false;
+  try{
+    if(MODE==="reg"){
+      if(password.length<8){amsg("Password must be at least 8 characters.");return;}
+      if(password!==$("pass2").value){amsg("Passwords don't match.");return;}
+      const payload={email,password,first_name:$("rFirst").value.trim(),last_name:$("rLast").value.trim(),npn:$("rNpn").value.trim(),phone:$("rPhone").value.trim()};
+      if(AFF) payload.affiliation_id=String(AFF);
+      let out={}; try{ const res=await fetch(SB_URL+"/functions/v1/register-agent",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY},body:JSON.stringify(payload)}); out=await res.json().catch(()=>({})); if(!res.ok){ amsg(out.error||"Could not create your account."); return; } }
+      catch(e){ amsg("Network error creating your account. Please try again."); return; }
+      const {error}=await sb.auth.signInWithPassword({email,password});
+      if(error){ amsg("Account created — please sign in.",true); setMode("login"); return; }
+    } else {
+      const {error}=await sb.auth.signInWithPassword({email,password});
+      if(error){ amsg(/invalid login/i.test(error.message)?"Wrong email or password.":error.message); return; }
+    }
+  } finally { $("authBtn").disabled=false; }
+}
+async function forgotPw(){
+  const email=$("email").value.trim().toLowerCase();
+  if(!email){amsg("Enter your email above first, then click Forgot password.");return;}
+  const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
   if(error){amsg(error.message);return;}
-  amsg("Check your email — we sent a secure link to "+email+". Open it on this device to continue.",true);
+  amsg("Check your email — we sent a password-reset link to "+email+".",true);
+}
+function showReset(){
+  $("auth").classList.remove("hidden"); $("app").style.display="none";
+  const an=$("authNormal"); if(an) an.style.display="none";
+  const pr=$("pwReset"); if(pr) pr.classList.remove("hidden");
+}
+async function setNewPw(){
+  const np=$("npass").value; const m=$("pwResetMsg");
+  if(np.length<8){ m.className="msg err"; m.textContent="Password must be at least 8 characters."; return; }
+  const {error}=await sb.auth.updateUser({password:np});
+  if(error){ m.className="msg err"; m.textContent=error.message; return; }
+  RECOVERY=false; const an=$("authNormal"); if(an) an.style.display=""; const pr=$("pwReset"); if(pr) pr.classList.add("hidden");
+  enterApp();
 }
 async function signOut(){await sb.auth.signOut();location.reload();}
 function esc(s){return (s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 
 // ---------- boot ----------
-sb.auth.onAuthStateChange((_e,session)=>{ if(session) enterApp(); });
-(async()=>{ initAff(); const {data}=await sb.auth.getSession(); if(data.session) enterApp(); })();
+let RECOVERY = (location.hash.indexOf("type=recovery")>=0);
+sb.auth.onAuthStateChange((event,session)=>{ if(event==="PASSWORD_RECOVERY"){ RECOVERY=true; showReset(); return; } if(session && !RECOVERY) enterApp(); });
+(async()=>{ initAff(); const {data}=await sb.auth.getSession(); if(data.session && !RECOVERY) enterApp(); else if(RECOVERY) showReset(); })();
 
 async function enterApp(){
   $("auth").classList.add("hidden"); $("app").style.display="block";
