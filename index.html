@@ -306,11 +306,21 @@ function drawPersonal(P){
    <div class="row c2" style="margin-bottom:12px"><div>${field("f_resfrom","Living at this residence since",p.res_from_date,"date")}<div class="sechint" style="margin-top:4px">If less than 5 years, add prior addresses under History.</div></div><div></div></div>
    <h2 class="sec" style="margin-top:8px">Resident license</h2>
    <div class="row c2" style="margin:8px 0 14px">${field("f_rls","Resident license state",p.resident_lic_state)}${field("f_rln","Resident license #",p.resident_lic_number)}</div>
+   <h2 class="sec" style="margin-top:8px">Additional name &amp; contact</h2>
+   <div class="row c3" style="margin:8px 0 12px">${field("f_middle","Middle name",p.middle_name)}${field("f_suffix","Suffix (Jr/Sr/III)",p.suffix)}${field("f_maiden","Maiden / other name used",p.maiden_name)}</div>
+   <div class="row c3" style="margin-bottom:12px">${field("f_marital","Marital status",p.marital_status)}${field("f_spouse","Spouse name",p.spouse_name)}${field("f_apt","Apt / Suite #",p.res_apt)}</div>
+   <div class="row c3" style="margin-bottom:12px">${field("f_cell","Cell phone",p.cell_phone)}${field("f_busph","Business phone",p.business_phone)}${field("f_fax","Fax",p.fax)}</div>
+   <h2 class="sec" style="margin-top:8px">Business address <span class="sechint">(only if different from residence)</span></h2>
+   <div class="row c2" style="margin:8px 0 12px">${field("f_ba1","Business address",p.bus_addr1)}${field("f_bci","City",p.bus_city)}</div>
+   <div class="row c2" style="margin-bottom:12px">${field("f_bst","State",p.bus_state)}${field("f_bzip","ZIP",p.bus_zip)}</div>
+   <h2 class="sec" style="margin-top:8px">Other carrier requirements</h2>
+   <div class="row c2" style="margin:8px 0 12px">${field("f_emgn","Emergency / trusted contact name",p.emergency_contact_name)}${field("f_emgd","Emergency contact phone &amp; relationship",p.emergency_contact_details)}</div>
+   <div class="row c2" style="margin-bottom:14px"><div>${field("f_flco","Florida counties",p.fl_counties)}<div class="sechint" style="margin-top:4px">Only if you will solicit in Florida. Leave blank otherwise.</div></div><div></div></div>
    <button class="btn" onclick="submitPersonal(this)">Save</button> <span id="pSaved" class="saved"></span></div>`;
 }
 async function submitPersonal(btn){ btn.disabled=true;
   const g=id=>$(id).value.trim()||null;
-  const err=await saveProfile({dob:g("f_dob"),ssn:g("f_ssn"),gender:g("f_gender"),dl_state:g("f_dls"),dl_number:g("f_dln"),place_of_birth:g("f_pob"),res_addr1:g("f_a1"),res_addr2:g("f_a2"),res_city:g("f_ci"),res_state:g("f_st"),res_zip:g("f_zip"),resident_county:g("f_co"),res_from_date:g("f_resfrom"),resident_lic_state:g("f_rls"),resident_lic_number:g("f_rln")});
+  const err=await saveProfile({dob:g("f_dob"),ssn:g("f_ssn"),gender:g("f_gender"),dl_state:g("f_dls"),dl_number:g("f_dln"),place_of_birth:g("f_pob"),res_addr1:g("f_a1"),res_addr2:g("f_a2"),res_city:g("f_ci"),res_state:g("f_st"),res_zip:g("f_zip"),resident_county:g("f_co"),res_from_date:g("f_resfrom"),resident_lic_state:g("f_rls"),resident_lic_number:g("f_rln"),middle_name:g("f_middle"),suffix:g("f_suffix"),maiden_name:g("f_maiden"),marital_status:g("f_marital"),spouse_name:g("f_spouse"),res_apt:g("f_apt"),cell_phone:g("f_cell"),business_phone:g("f_busph"),fax:g("f_fax"),bus_addr1:g("f_ba1"),bus_city:g("f_bci"),bus_state:g("f_bst"),bus_zip:g("f_bzip"),emergency_contact_name:g("f_emgn"),emergency_contact_details:g("f_emgd"),fl_counties:g("f_flco")});
   btn.disabled=false; if(err){$("pSaved").textContent="Error: "+err.message;$("pSaved").style.color="var(--red)";return;}
   $("pSaved").textContent="Saved ✓";$("pSaved").style.color="var(--green)"; await loadFlags(); render(); go("personal");
 }
