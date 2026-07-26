@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Equita Contracting — Admin Console</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/supabase/2.39.3/umd/supabase.min.js"></script>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2129;--line:#2d333b;--txt:#e6edf3;--dim:#8b949e;--acc:#2f81f7;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--gold:#c9a227}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font:14px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif}
+a{color:var(--acc);text-decoration:none}
+.top{display:flex;align-items:center;gap:14px;padding:10px 18px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50}
+.top .logo{font-weight:800;letter-spacing:.4px}.top .logo span{color:var(--gold)}
+.top .who{margin-left:auto;color:var(--dim);font-size:12px}
+nav{display:flex;gap:2px;background:var(--panel);border-bottom:1px solid var(--line);padding:0 12px;overflow-x:auto}
+nav a{padding:9px 14px;color:var(--dim);border-bottom:2px solid transparent;white-space:nowrap}
+nav a.on{color:var(--txt);border-color:var(--gold)}
+main{padding:16px 18px;max-width:1500px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input,select,textarea{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:7px 10px;font:inherit}
+input:focus,select:focus,textarea:focus{outline:1px solid var(--acc)}
+button{background:var(--acc);border:0;color:#fff;border-radius:7px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+button.sec{background:var(--panel2);border:1px solid var(--line);color:var(--txt)}
+button.ok{background:var(--ok)}button.warn{background:var(--warn);color:#111}button.bad{background:var(--bad)}
+button:disabled{opacity:.45;cursor:not-allowed}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--dim);text-align:left;font-weight:600;padding:7px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:7px 9px;border-bottom:1px solid #21262d;vertical-align:top}
+tr.click{cursor:pointer}tr.click:hover td{background:#1a2029}
+.chip{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700}
+.c-ok{background:#12351c;color:#4ade80}.c-warn{background:#3b2f10;color:#fbbf24}.c-bad{background:#3d1418;color:#f87171}
+.c-dim{background:#21262d;color:var(--dim)}.c-acc{background:#122a4d;color:#7ab7ff}.c-gold{background:#332a10;color:var(--gold)}
+h2{font-size:17px;margin-bottom:10px}h3{font-size:14px;margin:12px 0 6px;color:var(--dim)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.kv{font-size:13px}.kv b{color:var(--dim);font-weight:600;display:inline-block;min-width:130px}
+.gate{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px}
+.gate .dot{width:10px;height:10px;border-radius:50%}
+.dot.g{background:var(--ok)}.dot.r{background:var(--bad)}.dot.y{background:var(--warn)}
+.drawer{position:fixed;top:0;right:-720px;width:700px;max-width:96vw;height:100vh;background:var(--panel);border-left:1px solid var(--line);z-index:100;transition:right .22s;overflow-y:auto;padding:18px}
+.drawer.open{right:0}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:90;display:none}.overlay.on{display:block}
+.login{max-width:400px;margin:9vh auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:26px}
+.login input{width:100%;margin-bottom:10px}
+.muted{color:var(--dim);font-size:12px}
+.note{background:#1b2430;border-left:3px solid var(--warn);padding:8px 12px;border-radius:6px;font-size:12.5px;color:#d8c07a;margin:8px 0}
+.pill-row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#243044;border:1px solid var(--acc);padding:10px 18px;border-radius:8px;z-index:200;display:none}
+@media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}.drawer{width:100vw}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="overlay" id="ovl" onclick="UI.closeDrawer()"></div>
+<div class="drawer" id="drawer"></div>
+<div class="toast" id="toast"></div>
+<script>
+/* ============================================================
+   Equita Contracting Admin Console — Phase 3 (SureLC BGA replacement)
+   Architecture: hash-routed views + RPC data layer (adm_* SECURITY DEFINER,
+   row-level scoped by admin_accounts). Static-file deploy, AMS-style JS inside.
+   ============================================================ */
+const SB_URL='https://tcivqllwxodihiphhknp.supabase.co';
+const SB_KEY='sb_publishable_dwkJS210Aqbe77Wlq6wmvQ_kTjIqBt2';
+const sb=window.supabase.createClient(SB_URL,SB_KEY);
+
+/* ---------------- Data layer ---------------- */
+const API={
+  secret:sessionStorage.getItem('adm_secret')||null,
+  me:null,
+  async rpc(fn,args={}){
+    if(this.secret) args.p_secret=this.secret;
+    const {data,error}=await sb.rpc(fn,args);
+    if(error) throw new Error(error.message);
+    return data;
+  },
+  async login(email,pw){ const {error}=await sb.auth.signInWithPassword({email,password:pw}); if(error) throw error; },
+  async whoami(){ this.me=await this.rpc('adm_me'); return this.me; },
+  canWrite(){ return this.me && ['full_admin','agency_worker','affiliate_processor'].includes(this.me.role); },
+  canSubmit(){ return this.canWrite() && this.me.can_submit; },
+  isFull(){ return this.me && this.me.role==='full_admin'; }
+};
+
+/* ---------------- UI helpers ---------------- */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtD=s=>s?new Date(s).toLocaleDateString():'—';
+const UI={
+  toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2600);},
+  openDrawer(html){$('#drawer').innerHTML=html;$('#drawer').classList.add('open');$('#ovl').classList.add('on');},
+  closeDrawer(){$('#drawer').classList.remove('open');$('#ovl').classList.remove('on');},
+  chipStage(s){const m={draft:'c-dim',ready:'c-acc',submitted:'c-gold',completed:'c-ok',approved:'c-ok',declined:'c-bad'};return `<span class="chip ${m[s]||'c-dim'}">${esc(s||'—')}</span>`;},
+  chipDba(t){ if(!t) return '<span class="chip c-bad">not defined</span>';
+    const m={business:'c-acc',individual:'c-ok',loa:'c-warn'};return `<span class="chip ${m[(t||'').toLowerCase()]||'c-dim'}">${esc(t)}</span>`;},
+  csv(rows,name){ if(!rows||!rows.length){UI.toast('Nothing to export');return;}
+    const cols=Object.keys(rows[0]);
+    const body=rows.map(r=>cols.map(c=>`"${String(r[c]??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob=new Blob([cols.join(',')+'\n'+body],{type:'text/csv'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();}
+};
+
+/* ---------------- Router ---------------- */
+const VIEWS={producers:Producers,requests:Requests,affiliations:Affiliations,firms:Firms,carriers:Carriers,reports:Reports,prefills:Prefills,admins:Admins};
+async function route(){
+  const v=(location.hash||'#producers').slice(1).split('/')[0];
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
+  const fn=VIEWS[v]||Producers;
+  $('#view').innerHTML='<div class="card muted">Loading…</div>';
+  try{ await fn(); }catch(e){ $('#view').innerHTML=`<div class="card"><span class="chip c-bad">error</span> ${esc(e.message)}</div>`; }
+}
+window.addEventListener('hashchange',route);
+
+/* ---------------- Shell ---------------- */
+function shell(){
+  const m=API.me;
+  const tabs=[['producers','Producers'],['requests','Requests'],['affiliations','Affiliations'],['firms','Firms'],['carriers','Carriers'],['reports','Reports'],['prefills','Pre-fills']];
+  if(API.isFull()) tabs.push(['admins','Admins']);
+  $('#app').innerHTML=`
+  <div class="top"><div class="logo">EQUITA <span>CONTRACTING</span> · Admin</div>
+    <div class="who">${esc(m.email)} · <span class="chip c-gold">${esc(m.role)}</span>${m.can_submit?'':' · <span class="chip c-warn">complete-only</span>'}
+    &nbsp;<a href="#" onclick="logout();return false">sign out</a></div></div>
+  <nav>${tabs.map(([v,l])=>`<a href="#${v}" data-v="${v}">${l}</a>`).join('')}</nav>
+  <main id="view"></main>`;
+  route();
+}
+async function logout(){ await sb.auth.signOut(); sessionStorage.removeItem('adm_secret'); location.reload(); }
+
+/* ---------------- Login ---------------- */
+function loginView(msg){
+  $('#app').innerHTML=`
+  <div class="login"><div class="logo" style="font-weight:800;font-size:18px;margin-bottom:14px">EQUITA <span style="color:var(--gold)">CONTRACTING</span> · Admin</div>
+  ${msg?`<div class="note">${esc(msg)}</div>`:''}
+  <input id="li_e" type="email" placeholder="Admin email">
+  <input id="li_p" type="password" placeholder="Password">
+  <button style="width:100%" onclick="doLogin()">Sign in</button>
+  <div class="muted" style="margin:12px 0 6px">— or —</div>
+  <input id="li_k" type="password" placeholder="Access key">
+  <button class="sec" style="width:100%" onclick="doKey()">Enter with access key</button>
+  <div class="muted" style="margin-top:10px">Access is scoped: partners see only their own agents.</div></div>`;
+}
+async function doLogin(){
+  try{ await API.login($('#li_e').value.trim(),$('#li_p').value);
+    const me=await API.whoami();
+    if(!me.ok) return loginView('Signed in, but this email is not an active admin account.');
+    shell();
+  }catch(e){ loginView(e.message); }
+}
+async function doKey(){
+  API.secret=$('#li_k').value.trim(); sessionStorage.setItem('adm_secret',API.secret);
+  try{ const me=await API.whoami(); if(!me.ok) throw new Error('bad key'); shell(); }
+  catch(e){ sessionStorage.removeItem('adm_secret'); API.secret=null; loginView('Invalid access key.'); }
+}
+
+/* ================= PRODUCERS ================= */
+let AFF_CACHE=null;
+async function affOptions(sel){
+  if(!AFF_CACHE){ const r=await API.rpc('adm_affiliations'); AFF_CACHE=r.rows||[]; }
+  return `<option value="">All affiliations</option>`+AFF_CACHE.map(a=>`<option value="${a.id}" ${String(sel)===String(a.id)?'selected':''}>${esc(a.name)} (${a.agent_count})</option>`).join('');
+}
+async function Producers(){
+  const opts=await affOptions();
+  $('#view').innerHTML=`
+  <div class="card"><h2>Producer directory</h2>
+    <div class="row"><input id="p_q" placeholder="Search name, email, NPN…" style="min-width:260px" onkeydown="if(event.key==='Enter')loadProducers()">
+    <select id="p_aff" onchange="loadProducers()">${opts}</select>
+    <button onclick="loadProducers()">Search</button><span class="muted" id="p_total"></span></div></div>
+  <div class="card" id="p_tbl"><div class="muted">Search or pick an affiliation.</div></div>`;
+  loadProducers();
+}
+async function loadProducers(){
+  const q=$('#p_q').value.trim(), aff=$('#p_aff').value?Number($('#p_aff').value):null;
+  const r=await API.rpc('adm_producers',{p_search:q,p_affiliation_id:aff,p_limit:100,p_offset:0});
+  $('#p_total').textContent=`${r.total} producers`;
+  const rows=r.rows||[];
+  $('#p_tbl').innerHTML=rows.length?`<table><tr><th>Name</th><th>Email</th><th>NPN</th><th>State</th><th>Affiliation</th><th>DBA</th><th>Status</th></tr>`+
+    rows.map(p=>`<tr class="click" onclick="producerDetail('${p.id}')">
+      <td><b>${esc(p.first_name)} ${esc(p.last_name)}</b></td><td>${esc(p.email)}</td><td>${esc(p.npn||'—')}</td>
+      <td>${esc(p.state||'—')}</td><td>${esc(p.affiliation_name||'—')}</td><td>${UI.chipDba(p.dba_type)}</td>
+      <td>${UI.chipStage(p.contract_status||p.stage)}</td></tr>`).join('')+'</table>':'<div class="muted">No matches.</div>';
+}
+async function producerDetail(id){
+  const d=await API.rpc('adm_producer_detail',{p_id:id});
+  if(!d.ok) return UI.toast(d.error);
+  const p=d.producer, pr=d.profile||{};
+  UI.openDrawer(`
+  <div class="row" style="justify-content:space-between"><h2>${esc(p.first_name)} ${esc(p.last_name)}</h2>
+    <button class="sec" onclick="UI.closeDrawer()">Close</button></div>
+  <div class="pill-row">${UI.chipDba(pr.dba_type)} ${UI.chipStage(p.contract_status||p.stage)}
+    ${d.affiliation?`<span class="chip c-acc">${esc(d.affiliation.name)}</span>`:''}</div>
+  ${!pr.dba_type&&API.canWrite()?`<div class="note">Business type not defined — by convention this usually means LOA.
+    <button class="warn" style="margin-left:8px;padding:4px 10px" onclick="setDba('${p.id}','loa')">Set LOA</button>
+    <button class="sec" style="padding:4px 10px" onclick="setDba('${p.id}','individual')">Individual</button>
+    <button class="sec" style="padding:4px 10px" onclick="setDba('${p.id}','business')">Business entity</button></div>`:''}
+  <div class="grid2">
+    <div><h3>Contact</h3><div class="kv"><b>Email</b>${esc(p.email)}</div><div class="kv"><b>Phone</b>${esc(p.phone||'—')}</div>
+      <div class="kv"><b>NPN</b>${esc(p.npn||'—')}</div><div class="kv"><b>Resident</b>${esc(pr.res_city||'')} ${esc(pr.res_state||'')}</div></div>
+    <div><h3>Business / DBA</h3><div class="kv"><b>Entity</b>${esc(pr.business_name||'—')}</div><div class="kv"><b>TIN</b>${esc(pr.tin?'••'+String(pr.tin).slice(-4):'—')}</div>
+      <div class="kv"><b>Corp NPN</b>${esc(pr.corporate_lic_number||'—')}</div>
+      ${(d.dba||[]).map(x=>`<div class="kv"><b>DBA</b>${esc(x.dba_name)} (${esc(x.entity_type||'')})</div>`).join('')}</div>
+  </div>
+  <h3>Contract requests</h3>
+  ${(d.requests||[]).length?`<table><tr><th>Carrier</th><th>Stage</th><th>Level</th><th>Created</th><th>Submitted</th></tr>`+
+    d.requests.map(r=>`<tr class="click" onclick="UI.closeDrawer();location.hash='#requests';setTimeout(()=>requestDetail('${r.id}'),300)">
+    <td>${esc(r.carrier_name||r.carrier_key)}</td><td>${UI.chipStage(r.stage)}</td><td>${esc(r.comp_level||'—')}</td>
+    <td>${fmtD(r.created_at)}</td><td>${fmtD(r.submitted_at)}</td></tr>`).join('')+'</table>':'<div class="muted">None.</div>'}
+  <h3>Documents</h3>
+  ${(d.documents||[]).length?`<div class="pill-row">${d.documents.map(x=>`<span class="chip c-dim">${esc(x.kind)}: ${esc(x.filename)}</span>`).join('')}</div>`:'<div class="muted">None.</div>'}`);
+}
+async function setDba(id,t){ const r=await API.rpc('adm_set_dba',{p_id:id,p_dba_type:t}); UI.toast(r.ok?'DBA set to '+t:r.error); if(r.ok) producerDetail(id); }
+
+/* ================= REQUESTS (review-and-complete) ================= */
+async function Requests(){
+  $('#view').innerHTML=`
+  <div class="card"><h2>Contract requests</h2>
+    <div class="row"><select id="r_stage" onchange="loadRequests()">
+      <option value="">All stages</option><option>draft</option><option>ready</option><option>submitted</option><option>completed</option><option>declined</option></select>
+      <input id="r_q" placeholder="Search agent or carrier…" onkeydown="if(event.key==='Enter')loadRequests()">
+      <button onclick="loadRequests()">Search</button></div></div>
+  <div class="card" id="r_tbl"></div>`;
+  loadRequests();
+}
+async function loadRequests(){
+  const r=await API.rpc('adm_requests',{p_stage:$('#r_stage').value||null,p_search:$('#r_q').value.trim()||null});
+  const rows=r.rows||[];
+  $('#r_tbl').innerHTML=rows.length?`<table><tr><th>Agent</th><th>Carrier</th><th>Affiliation</th><th>Stage</th><th>Level</th><th>Profile</th><th>Created</th></tr>`+
+    rows.map(x=>`<tr class="click" onclick="requestDetail('${x.id}')">
+    <td><b>${esc(x.producer_name)}</b><div class="muted">${esc(x.email)}</div></td><td>${esc(x.carrier_name||x.carrier_key)}</td>
+    <td>${esc(x.affiliation_name||'—')}</td><td>${UI.chipStage(x.stage)}</td><td>${esc(x.comp_level||'—')}</td>
+    <td>${x.profile_completed?'<span class="chip c-ok">complete</span>':'<span class="chip c-bad">incomplete</span>'}</td>
+    <td>${fmtD(x.created_at)}</td></tr>`).join('')+'</table>':'<div class="muted">No requests.</div>';
+}
+async function requestDetail(id){
+  const d=await API.rpc('adm_request_detail',{p_id:id});
+  if(!d.ok) return UI.toast(d.error);
+  const r=d.request, p=d.producer, cfg=d.config||{}, g=d.gates||{}, pre=d.prefill||{};
+  const qd=Object.assign({},cfg.question_defaults||{},(r.carrier_answers||{}));
+  const lines=cfg.lines||[]; const defl=(r.products&&r.products.length?r.products:cfg.default_lines)||[];
+  const gate=(k,lbl,okTxt,badTxt)=>`<div class="gate"><span class="dot ${g[k]?'g':'r'}"></span>${lbl}: <b>${g[k]?okTxt:badTxt}</b></div>`;
+  const agentReady=g.profile&&g.signature;
+  UI.openDrawer(`
+  <div class="row" style="justify-content:space-between"><h2>${esc(p.name)} — ${esc(r.carrier_name||r.carrier_key)}</h2>
+    <button class="sec" onclick="UI.closeDrawer()">Close</button></div>
+  <div class="pill-row">${UI.chipStage(r.stage)} <span class="chip c-acc">${esc(p.affiliation||'no affiliation')}</span>
+    ${UI.chipDba(p.dba_type)} ${cfg.signature_block==='recommending_agency_manager'?'<span class="chip c-gold">recommending agency + manager sig</span>':''}</div>
+  ${cfg.deselect_note?`<div class="note">${esc(cfg.deselect_note)}</div>`:''}
+  <div class="grid2">
+    <div><h3>Agent-owned (gates)</h3>
+      ${gate('profile','Profile','complete','incomplete')}
+      ${gate('signature','Signature on file','yes','missing')}
+      ${gate('eft','Banking / EFT','on file','missing')}
+      ${gate('eo','E&O','on file','missing')}
+      ${gate('training','Training / AML','on file','missing')}
+      <div class="gate"><span class="dot ${g.disclosures_answered>=19?'g':'y'}"></span>Background questionnaire: <b>${g.disclosures_answered||0} answered</b></div>
+      <div class="gate"><span class="dot ${g.documents>0?'g':'y'}"></span>Supporting documents: <b>${g.documents||0}</b></div>
+      ${!agentReady?'<div class="note">Agent-owned sections incomplete — submission is gated. Send back to the agent.</div>':''}
+    </div>
+    <div><h3>Processor-owned</h3>
+      <div class="kv" style="margin-bottom:6px"><b>Products</b></div>
+      <div class="pill-row">${lines.map(l=>`<label class="chip ${defl.includes(l)?'c-acc':'c-dim'}" style="cursor:pointer">
+        <input type="checkbox" data-line="${esc(l)}" ${defl.includes(l)?'checked':''} style="accent-color:var(--acc)"> ${esc(l)}</label>`).join('')||'<span class="muted">n/a</span>'}</div>
+      <div class="kv"><b>Upline</b><input id="rq_upline" value="${esc(r.upline||pre.upline||'')}" placeholder="Immediate upline${cfg.upline_depth==='full_chain'?' + full chain':''}" style="width:240px"></div>
+      <div class="kv" style="margin-top:6px"><b>Comp level</b><input id="rq_level" value="${esc(r.comp_level||'')}" style="width:90px">
+        <input id="rq_tier" placeholder="tier e.g. E140" style="width:110px">
+        <button class="sec" onclick="gridLookup('${esc(r.carrier_key)}')">Grid lookup</button>
+        <span class="muted">${cfg.level_boxes>1?cfg.level_boxes+' level boxes on form':''}</span></div>
+      <div class="kv" style="margin-top:6px"><b>Advance</b>${cfg.advance_months||9}-month${cfg.advance_amount?' / $'+cfg.advance_amount:''}</div>
+      <h3>Carrier questions</h3>
+      <div id="rq_qa">${Object.keys(qd).length?Object.entries(qd).map(([k,v])=>`
+        <div class="kv" style="margin-bottom:4px"><b>${esc(k)}</b><input data-qk="${esc(k)}" value="${esc(v??'')}" style="width:200px"></div>`).join(''):'<div class="muted">None configured.</div>'}
+      </div>
+      <div class="row" style="margin-top:6px"><input id="rq_newq" placeholder="add question key" style="width:160px"><button class="sec" onclick="addQ()">+ question</button></div>
+    </div>
+  </div>
+  <div class="row" style="margin-top:14px">
+    ${API.canWrite()?`<button onclick="saveRequest('${r.id}')">Save processor fields</button>`:''}
+    ${API.canWrite()&&cfg.generator_fn?`<button class="ok" ${agentReady?'':'disabled title="agent gates incomplete"'} onclick="genPacket('${r.id}','${esc(cfg.generator_fn)}')">Generate packet</button>`:''}
+    ${API.canSubmit()?`<button class="warn" ${agentReady?'':'disabled'} onclick="markSubmitted('${r.id}')">Mark submitted</button>`:'<span class="chip c-warn">complete-only role: submission handled by a submitter</span>'}
+  </div>
+  <div class="muted" style="margin-top:8px">Paperwork date must match submission date or fall within the prior 30 days. Mandatory documents are locked into every packet by the generator.</div>`);
+}
+function addQ(){ const k=$('#rq_newq').value.trim(); if(!k)return;
+  $('#rq_qa').insertAdjacentHTML('beforeend',`<div class="kv" style="margin-bottom:4px"><b>${esc(k)}</b><input data-qk="${esc(k)}" value="" style="width:200px"></div>`);$('#rq_newq').value='';}
+async function gridLookup(ck){
+  const t=$('#rq_tier').value.trim(); if(!t) return UI.toast('Enter a tier code (e.g. E140)');
+  const r=await API.rpc('adm_lookup_level',{p_carrier:ck,p_tier:t});
+  if(r.ok){$('#rq_level').value=r.level;UI.toast(`Grid: ${t} → level ${r.level}`);}else UI.toast(r.error);
+}
+async function saveRequest(id){
+  const prods=[...document.querySelectorAll('[data-line]')].filter(c=>c.checked).map(c=>c.dataset.line);
+  const qa={};document.querySelectorAll('[data-qk]').forEach(i=>{qa[i.dataset.qk]=i.value;});
+  const r=await API.rpc('adm_request_complete',{p_id:id,p_products:JSON.stringify(prods)===JSON.stringify([])?null:prods,
+    p_upline:$('#rq_upline').value.trim()||null,p_comp_level:$('#rq_level').value.trim()||null,p_carrier_answers:qa});
+  UI.toast(r.ok?'Saved':r.error);
+}
+async function genPacket(id,fn){
+  UI.toast('Generating packet…');
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    const tok=session?session.access_token:SB_KEY;
+    const res=await fetch(`${SB_URL}/functions/v1/${fn}`,{method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+tok},
+      body:JSON.stringify({request_id:id})});
+    const j=await res.json();
+    if(res.status===409) return UI.toast('Blocked: disclosures incomplete ('+(j.unanswered||[]).join(', ')+')');
+    if(!res.ok||j.error) return UI.toast('Error: '+(j.error||res.status));
+    UI.toast(`Packet generated (${j.pages} pages) — emailed for review`);
+  }catch(e){ UI.toast('Error: '+e.message); }
+}
+async function markSubmitted(id){ const r=await API.rpc('adm_request_mark_submitted',{p_id:id}); UI.toast(r.ok?'Marked submitted':r.error); if(r.ok){UI.closeDrawer();loadRequests();} }
+
+/* ================= AFFILIATIONS ================= */
+async function Affiliations(){
+  const r=await API.rpc('adm_affiliations'); AFF_CACHE=r.rows||[];
+  $('#view').innerHTML=`
+  <div class="card"><div class="row" style="justify-content:space-between"><h2>Affiliations</h2>
+    ${API.canWrite()?'<button onclick="affEdit(null)">+ Add affiliation</button>':''}</div>
+  <div class="muted">Attribution backbone — completing a contract writes the producer to its affiliation automatically.</div></div>
+  <div class="card"><table><tr><th>Name</th><th>Business</th><th>Email</th><th>Agents</th><th>Carriers</th><th></th></tr>
+  ${AFF_CACHE.map(a=>`<tr><td><b>${esc(a.name)}</b></td><td>${esc(a.business_name||'—')}</td><td>${esc(a.contracting_email||'—')}</td>
+    <td><a href="#producers" onclick="setTimeout(()=>{document.querySelector('#p_aff').value='${a.id}';loadProducers();},300)">${a.agent_count}</a></td>
+    <td>${a.carrier_count}</td>
+    <td>${API.canWrite()?`<button class="sec" style="padding:4px 10px" onclick='affEdit(${JSON.stringify(a).replace(/'/g,"&#39;")})'>Edit</button>`:''}</td></tr>`).join('')}</table></div>`;
+}
+function affEdit(a){
+  a=a||{};
+  UI.openDrawer(`<h2>${a.id?'Edit':'New'} affiliation</h2>
+  <div class="kv" style="margin:10px 0"><b>Name</b><input id="af_n" value="${esc(a.name||'')}"></div>
+  <div class="kv" style="margin:10px 0"><b>Business name</b><input id="af_b" value="${esc(a.business_name||'')}"></div>
+  <div class="kv" style="margin:10px 0"><b>Contracting email</b><input id="af_e" value="${esc(a.contracting_email||'')}"></div>
+  <div class="row"><button onclick="affSave(${a.id||null})">Save</button><button class="sec" onclick="UI.closeDrawer()">Cancel</button></div>`);
+}
+async function affSave(id){
+  const r=await API.rpc('adm_affiliation_save',{p_id:id,p_name:$('#af_n').value.trim(),p_business_name:$('#af_b').value.trim()||null,p_email:$('#af_e').value.trim()||null});
+  UI.toast(r.ok?'Saved':r.error); if(r.ok){UI.closeDrawer();AFF_CACHE=null;Affiliations();}
+}
+
+/* ================= FIRMS ================= */
+async function Firms(){
+  $('#view').innerHTML=`
+  <div class="card"><h2>Firms</h2><div class="row">
+    <input id="f_q" placeholder="Search firm / LLC name…" style="min-width:280px" onkeydown="if(event.key==='Enter')loadFirms()">
+    <button onclick="loadFirms()">Search</button></div>
+    <div class="muted">Find the principal behind an LLC. “not specified” = abandoned or deleted record.</div></div>
+  <div class="card" id="f_tbl"><div class="muted">Search a firm name.</div></div>`;
+}
+async function loadFirms(){
+  const r=await API.rpc('adm_firms',{p_search:$('#f_q').value.trim()});
+  const rows=r.rows||[];
+  $('#f_tbl').innerHTML=rows.length?`<table><tr><th>Firm</th><th>Type</th><th>TIN</th><th>Principal</th><th>Affiliation</th><th>Status</th></tr>`+
+    rows.map(f=>`<tr ${f.principal_id?`class="click" onclick="producerDetail('${f.principal_id}')"`:''}>
+    <td><b>${esc(f.firm_name)}</b></td><td>${esc(f.entity_type||'—')}</td><td>${esc(f.tin?'••'+String(f.tin).slice(-4):'—')}</td>
+    <td>${esc(f.principal_name||'—')}</td><td>${esc(f.affiliation_name||'—')}</td>
+    <td>${f.status==='not specified'?'<span class="chip c-bad">not specified</span>':'<span class="chip c-ok">active</span>'}</td></tr>`).join('')+'</table>':'<div class="muted">No matches.</div>';
+}
+
+/* ================= CARRIERS ================= */
+async function Carriers(){
+  const r=await API.rpc('adm_carrier_configs');
+  const rows=r.rows||[];
+  const chip=s=>({active:'c-ok',parked:'c-warn',special:'c-gold',inactive:'c-dim'})[s]||'c-dim';
+  $('#view').innerHTML=`
+  <div class="card"><h2>Carriers</h2><div class="muted">Parked is a first-class state — nothing needs to stay selected to avoid data loss.</div></div>
+  <div class="card"><table><tr><th>Carrier</th><th>Status</th><th>Default lines</th><th>Upline</th><th>Level boxes</th><th>Advance</th><th>Signature</th><th>Generator</th><th></th></tr>
+  ${rows.map(c=>`<tr><td><b>${esc(c.display_name)}</b>${c.companion_carrier?`<div class="muted">companion: ${esc(c.companion_carrier)}</div>`:''}</td>
+    <td><span class="chip ${chip(c.status)}">${esc(c.status)}</span></td>
+    <td>${(c.default_lines||[]).map(l=>`<span class="chip c-acc">${esc(l)}</span>`).join(' ')}</td>
+    <td>${esc(c.upline_depth)}</td><td>${c.level_boxes}</td>
+    <td>${c.advance_months||9}mo${c.advance_amount?' / $'+c.advance_amount:''}</td>
+    <td class="muted">${c.signature_block==='recommending_agency_manager'?'rec. agency + mgr':'auto principal'}</td>
+    <td>${c.generator_fn?'<span class="chip c-ok">built</span>':'<span class="chip c-dim">—</span>'}</td>
+    <td>${API.canWrite()?`<button class="sec" style="padding:4px 10px" onclick='carrierEdit(${JSON.stringify(c).replace(/'/g,"&#39;")})'>Edit</button>`:''}</td></tr>`).join('')}</table></div>`;
+}
+function carrierEdit(c){
+  UI.openDrawer(`<h2>${esc(c.display_name)}</h2>
+  <div class="grid2">
+    <div class="kv"><b>Status</b><select id="cc_status">${['active','parked','special','inactive'].map(s=>`<option ${c.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+    <div class="kv"><b>Upline depth</b><select id="cc_ud"><option ${c.upline_depth==='immediate'?'selected':''}>immediate</option><option ${c.upline_depth==='full_chain'?'selected':''}>full_chain</option></select></div>
+    <div class="kv"><b>Level boxes</b><input id="cc_lb" type="number" value="${c.level_boxes}" style="width:70px"></div>
+    <div class="kv"><b>Advance months</b><input id="cc_am" type="number" value="${c.advance_months||9}" style="width:70px"></div>
+    <div class="kv"><b>Advance $</b><input id="cc_aa" type="number" value="${c.advance_amount||''}" style="width:100px"></div>
+    <div class="kv"><b>Companion</b><input id="cc_comp" value="${esc(c.companion_carrier||'')}" style="width:150px"></div>
+  </div>
+  <h3>Default lines (JSON array)</h3><textarea id="cc_dl" style="width:100%" rows="2">${esc(JSON.stringify(c.default_lines||[]))}</textarea>
+  <h3>Question defaults (JSON)</h3><textarea id="cc_qd" style="width:100%" rows="4">${esc(JSON.stringify(c.question_defaults||{},null,1))}</textarea>
+  <h3>Deselect note</h3><textarea id="cc_note" style="width:100%" rows="2">${esc(c.deselect_note||'')}</textarea>
+  <div class="row" style="margin-top:10px"><button onclick='carrierSave(${JSON.stringify(c.carrier_key)})'>Save</button><button class="sec" onclick="UI.closeDrawer()">Cancel</button></div>`);
+}
+async function carrierSave(key){
+  try{
+    const r=await API.rpc('adm_carrier_config_save',{p:{carrier_key:key,
+      display_name:document.querySelector('.drawer h2').textContent,
+      status:$('#cc_status').value,upline_depth:$('#cc_ud').value,level_boxes:Number($('#cc_lb').value)||1,
+      advance_months:Number($('#cc_am').value)||9,advance_amount:$('#cc_aa').value||null,
+      companion_carrier:$('#cc_comp').value.trim()||null,
+      default_lines:JSON.parse($('#cc_dl').value||'[]'),question_defaults:JSON.parse($('#cc_qd').value||'{}'),
+      deselect_note:$('#cc_note').value.trim()||null}});
+    UI.toast(r.ok?'Saved':r.error); if(r.ok){UI.closeDrawer();Carriers();}
+  }catch(e){UI.toast('Invalid JSON: '+e.message);}
+}
+
+/* ================= REPORTS ================= */
+async function Reports(){
+  const today=new Date().toISOString().slice(0,10);
+  const wk=new Date(Date.now()-7*864e5).toISOString().slice(0,10);
+  $('#view').innerHTML=`
+  <div class="card"><h2>Appointments by Producer with Details</h2>
+    <div class="row"><input type="date" id="rp_from" value="${wk}"><input type="date" id="rp_to" value="${today}">
+    <button onclick="runAppt()">Run</button><button class="sec" onclick="UI.csv(window._appt,'appointments_by_producer.csv')">Download CSV</button></div>
+  <div id="rp_tbl" style="margin-top:10px"><div class="muted">Every producer who completed a contract in range, with affiliation and carriers.</div></div></div>
+  <div class="card"><h2>Self-Removed Producers</h2>
+    <div class="row"><button class="sec" onclick="runRemoved()">Run</button></div><div id="rp2_tbl" style="margin-top:10px"></div></div>`;
+}
+async function runAppt(){
+  const r=await API.rpc('adm_report_appointments',{p_from:$('#rp_from').value,p_to:$('#rp_to').value});
+  const rows=r.rows||[]; window._appt=rows;
+  $('#rp_tbl').innerHTML=rows.length?`<table><tr><th>Producer</th><th>Affiliation</th><th>Carrier</th><th>Stage</th><th>Level</th><th>Submitted</th></tr>`+
+    rows.map(x=>`<tr><td><b>${esc(x.producer_name)}</b><div class="muted">${esc(x.email)}</div></td><td>${esc(x.affiliation_name||'—')}</td>
+    <td>${esc(x.carrier_name)}</td><td>${UI.chipStage(x.stage)}</td><td>${esc(x.comp_level||'—')}</td><td>${fmtD(x.submitted_at)}</td></tr>`).join('')+'</table>'
+    :'<div class="muted">No appointments in range.</div>';
+}
+async function runRemoved(){
+  const r=await API.rpc('adm_report_self_removed');
+  const rows=r.rows||[];
+  $('#rp2_tbl').innerHTML=rows.length?`<table><tr><th>Producer</th><th>Email</th><th>Affiliation</th><th>Kind</th><th>Removed</th></tr>`+
+    rows.map(x=>`<tr><td>${esc(x.producer_name||'—')}</td><td>${esc(x.producer_email||'—')}</td><td>${esc(x.affiliation_name||'—')}</td>
+    <td>${esc(x.removal_kind)}</td><td>${fmtD(x.removed_at)}</td></tr>`).join('')+'</table>'
+    :'<div class="muted">No removals recorded (tracked going forward — names always kept, unlike SureLC’s code-name quirk).</div>';
+}
+
+/* ================= PRE-FILLS ================= */
+async function Prefills(){
+  const [pf,cc]=await Promise.all([API.rpc('adm_prefills'),API.rpc('adm_carrier_configs')]);
+  const rows=pf.rows||[];
+  $('#view').innerHTML=`
+  <div class="card"><div class="row" style="justify-content:space-between"><h2>Per-carrier pre-fills</h2>
+    ${API.canWrite()?'<button onclick="pfEdit(null)">+ Add pre-fill</button>':''}</div>
+    <div class="muted">Saved defaults (upline, our details, standard values) the wizard applies automatically.</div></div>
+  <div class="card">${rows.length?`<table><tr><th>Carrier</th><th>Label</th><th>Scope</th><th>Fields</th><th></th></tr>`+
+    rows.map(x=>`<tr><td><b>${esc(x.carrier_key)}</b></td><td>${esc(x.label)}</td><td>${esc(x.affiliation_name||'all')}</td>
+    <td class="muted">${esc(Object.keys(x.fields||{}).join(', '))}</td>
+    <td>${API.canWrite()?`<button class="sec" style="padding:4px 10px" onclick='pfEdit(${JSON.stringify(x).replace(/'/g,"&#39;")})'>Edit</button>`:''}</td></tr>`).join('')+'</table>':'<div class="muted">None yet.</div>'}</div>`;
+  window._cc=(cc.rows||[]).map(c=>c.carrier_key);
+}
+function pfEdit(x){
+  x=x||{fields:{upline:'Senior Advisor Services'}};
+  UI.openDrawer(`<h2>${x.id?'Edit':'New'} pre-fill</h2>
+  <div class="kv" style="margin:8px 0"><b>Carrier</b><select id="pf_c">${(window._cc||[]).map(k=>`<option ${x.carrier_key===k?'selected':''}>${k}</option>`).join('')}</select></div>
+  <div class="kv" style="margin:8px 0"><b>Label</b><input id="pf_l" value="${esc(x.label||'Default')}"></div>
+  <h3>Fields (JSON)</h3><textarea id="pf_f" style="width:100%" rows="7">${esc(JSON.stringify(x.fields||{},null,1))}</textarea>
+  <div class="row" style="margin-top:8px"><button onclick="pfSave(${x.id||null})">Save</button><button class="sec" onclick="UI.closeDrawer()">Cancel</button></div>`);
+}
+async function pfSave(id){
+  try{
+    const r=await API.rpc('adm_prefill_save',{p_id:id,p_carrier:$('#pf_c').value,p_affiliation_id:null,p_label:$('#pf_l').value.trim(),p_fields:JSON.parse($('#pf_f').value)});
+    UI.toast(r.ok?'Saved':r.error); if(r.ok){UI.closeDrawer();Prefills();}
+  }catch(e){UI.toast('Invalid JSON: '+e.message);}
+}
+
+/* ================= ADMINS ================= */
+async function Admins(){
+  const r=await API.rpc('adm_admins');
+  if(!r.ok){$('#view').innerHTML=`<div class="card">${esc(r.error)}</div>`;return;}
+  const rows=r.rows||[];
+  $('#view').innerHTML=`
+  <div class="card"><div class="row" style="justify-content:space-between"><h2>Admins & roles</h2>
+    <button onclick="admEdit(null)">+ Add admin</button></div>
+    <div class="muted">Affiliate roles are scoped to one affiliation. “Complete without submit” = processes everything, a submitter double-checks.</div></div>
+  <div class="card"><table><tr><th>Name</th><th>Email</th><th>Role</th><th>Scope</th><th>Submit</th><th>Active</th><th></th></tr>
+  ${rows.map(a=>`<tr><td><b>${esc(a.full_name||'—')}</b></td><td>${esc(a.email)}</td>
+    <td><span class="chip c-gold">${esc(a.role)}</span></td><td>${esc(a.affiliation_name||'org-wide')}</td>
+    <td>${a.can_submit?'<span class="chip c-ok">yes</span>':'<span class="chip c-warn">complete-only</span>'}</td>
+    <td>${a.active?'<span class="chip c-ok">active</span>':'<span class="chip c-dim">off</span>'}</td>
+    <td><button class="sec" style="padding:4px 10px" onclick='admEdit(${JSON.stringify(a).replace(/'/g,"&#39;")})'>Edit</button></td></tr>`).join('')}</table></div>`;
+}
+async function admEdit(a){
+  a=a||{role:'agency_worker',can_submit:true,active:true};
+  const opts=await affOptions(a.affiliation_id);
+  UI.openDrawer(`<h2>${a.id?'Edit':'New'} admin</h2>
+  <div class="kv" style="margin:8px 0"><b>Email</b><input id="ad_e" value="${esc(a.email||'')}" ${a.id?'readonly':''}></div>
+  <div class="kv" style="margin:8px 0"><b>Name</b><input id="ad_n" value="${esc(a.full_name||'')}"></div>
+  <div class="kv" style="margin:8px 0"><b>Role</b><select id="ad_r">${['full_admin','agency_manager','agency_worker','affiliate_processor','affiliate_worker'].map(x=>`<option ${a.role===x?'selected':''}>${x}</option>`).join('')}</select></div>
+  <div class="kv" style="margin:8px 0"><b>Affiliation scope</b><select id="ad_a">${opts}</select></div>
+  <div class="kv" style="margin:8px 0"><b>Can submit</b><select id="ad_s"><option value="true" ${a.can_submit?'selected':''}>yes</option><option value="false" ${!a.can_submit?'selected':''}>complete without submit</option></select></div>
+  <div class="kv" style="margin:8px 0"><b>Active</b><select id="ad_x"><option value="true" ${a.active?'selected':''}>active</option><option value="false" ${!a.active?'selected':''}>disabled</option></select></div>
+  <div class="row" style="margin-top:8px"><button onclick="admSave()">Save</button><button class="sec" onclick="UI.closeDrawer()">Cancel</button></div>`);
+}
+async function admSave(){
+  const r=await API.rpc('adm_admin_save',{p:{email:$('#ad_e').value.trim(),full_name:$('#ad_n').value.trim(),
+    role:$('#ad_r').value,affiliation_id:$('#ad_a').value||null,can_submit:$('#ad_s').value==='true',active:$('#ad_x').value==='true'}});
+  UI.toast(r.ok?'Saved':r.error); if(r.ok){UI.closeDrawer();Admins();}
+}
+
+/* ---------------- boot ---------------- */
+(async function(){
+  try{
+    if(API.secret){ const me=await API.whoami(); if(me.ok) return shell(); }
+    const {data:{session}}=await sb.auth.getSession();
+    if(session){ const me=await API.whoami(); if(me.ok) return shell(); }
+  }catch(_){}
+  loginView();
+})();
+</script>
+</body>
+</html>
