@@ -47,6 +47,9 @@ h2{font-size:17px;margin-bottom:10px}h3{font-size:14px;margin:12px 0 6px;color:v
 .note{background:#1b2430;border-left:3px solid var(--warn);padding:8px 12px;border-radius:6px;font-size:12.5px;color:#d8c07a;margin:8px 0}
 .pill-row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#243044;border:1px solid var(--acc);padding:10px 18px;border-radius:8px;z-index:200;display:none}
+details.sec{border:1px solid var(--line);border-radius:8px;margin:8px 0;background:var(--panel2)}
+details.sec summary{padding:8px 12px;cursor:pointer;font-weight:600;font-size:13px}
+details.sec .inner{padding:4px 12px 10px}
 @media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}.drawer{width:100vw}}
 </style>
 </head>
@@ -60,6 +63,7 @@ h2{font-size:17px;margin-bottom:10px}h3{font-size:14px;margin:12px 0 6px;color:v
    Equita Contracting Admin Console — Phase 3 (SureLC BGA replacement)
    Architecture: hash-routed views + RPC data layer (adm_* SECURITY DEFINER,
    row-level scoped by admin_accounts). Static-file deploy, AMS-style JS inside.
+   v2: full producer profile, agency settings, alerts, completed-by, bulk reassign, CSV exports.
    ============================================================ */
 const SB_URL='https://tcivqllwxodihiphhknp.supabase.co';
 const SB_KEY='sb_publishable_dwkJS210Aqbe77Wlq6wmvQ_kTjIqBt2';
@@ -101,7 +105,7 @@ const UI={
 };
 
 /* ---------------- Router ---------------- */
-const VIEWS={producers:Producers,requests:Requests,affiliations:Affiliations,firms:Firms,carriers:Carriers,reports:Reports,prefills:Prefills,admins:Admins};
+const VIEWS={producers:Producers,requests:Requests,affiliations:Affiliations,firms:Firms,carriers:Carriers,reports:Reports,prefills:Prefills,alerts:Alerts,agency:Agency,admins:Admins};
 async function route(){
   const v=(location.hash||'#producers').slice(1).split('/')[0];
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
@@ -114,7 +118,7 @@ window.addEventListener('hashchange',route);
 /* ---------------- Shell ---------------- */
 function shell(){
   const m=API.me;
-  const tabs=[['producers','Producers'],['requests','Requests'],['affiliations','Affiliations'],['firms','Firms'],['carriers','Carriers'],['reports','Reports'],['prefills','Pre-fills']];
+  const tabs=[['producers','Producers'],['requests','Requests'],['affiliations','Affiliations'],['firms','Firms'],['carriers','Carriers'],['reports','Reports'],['prefills','Pre-fills'],['alerts','Alerts'],['agency','Agency']];
   if(API.isFull()) tabs.push(['admins','Admins']);
   $('#app').innerHTML=`
   <div class="top"><div class="logo">EQUITA <span>CONTRACTING</span> · Admin</div>
@@ -164,7 +168,13 @@ async function Producers(){
   <div class="card"><h2>Producer directory</h2>
     <div class="row"><input id="p_q" placeholder="Search name, email, NPN…" style="min-width:260px" onkeydown="if(event.key==='Enter')loadProducers()">
     <select id="p_aff" onchange="loadProducers()">${opts}</select>
-    <button onclick="loadProducers()">Search</button><span class="muted" id="p_total"></span></div></div>
+    <button onclick="loadProducers()">Search</button>
+    <button class="sec" onclick="UI.csv(window._prod,'producers.csv')">Export CSV</button>
+    <span class="muted" id="p_total"></span></div>
+    ${API.canWrite()?`<div class="row" id="p_bulk" style="display:none;margin-top:8px">
+      <span class="muted"><b id="p_selcount">0</b> selected</span>
+      <select id="p_reaff">${opts.replace('All affiliations','— move to affiliation —')}</select>
+      <button class="warn" onclick="bulkReassign()">Reassign selected</button></div>`:''}</div>
   <div class="card" id="p_tbl"><div class="muted">Search or pick an affiliation.</div></div>`;
   loadProducers();
 }
@@ -172,40 +182,88 @@ async function loadProducers(){
   const q=$('#p_q').value.trim(), aff=$('#p_aff').value?Number($('#p_aff').value):null;
   const r=await API.rpc('adm_producers',{p_search:q,p_affiliation_id:aff,p_limit:100,p_offset:0});
   $('#p_total').textContent=`${r.total} producers`;
-  const rows=r.rows||[];
-  $('#p_tbl').innerHTML=rows.length?`<table><tr><th>Name</th><th>Email</th><th>NPN</th><th>State</th><th>Affiliation</th><th>DBA</th><th>Status</th></tr>`+
+  const rows=r.rows||[]; window._prod=rows;
+  const cw=API.canWrite();
+  $('#p_tbl').innerHTML=rows.length?`<table><tr>${cw?'<th></th>':''}<th>Name</th><th>Email</th><th>NPN</th><th>State</th><th>Affiliation</th><th>DBA</th><th>Status</th></tr>`+
     rows.map(p=>`<tr class="click" onclick="producerDetail('${p.id}')">
+      ${cw?`<td onclick="event.stopPropagation()"><input type="checkbox" class="psel" value="${p.id}" onchange="selCount()"></td>`:''}
       <td><b>${esc(p.first_name)} ${esc(p.last_name)}</b></td><td>${esc(p.email)}</td><td>${esc(p.npn||'—')}</td>
       <td>${esc(p.state||'—')}</td><td>${esc(p.affiliation_name||'—')}</td><td>${UI.chipDba(p.dba_type)}</td>
       <td>${UI.chipStage(p.contract_status||p.stage)}</td></tr>`).join('')+'</table>':'<div class="muted">No matches.</div>';
+  selCount();
+}
+function selCount(){
+  const n=document.querySelectorAll('.psel:checked').length;
+  const bar=$('#p_bulk'); if(!bar) return;
+  bar.style.display=n?'flex':'none';
+  const c=$('#p_selcount'); if(c) c.textContent=n;
+}
+async function bulkReassign(){
+  const ids=[...document.querySelectorAll('.psel:checked')].map(c=>c.value);
+  const aff=$('#p_reaff').value?Number($('#p_reaff').value):null;
+  if(!ids.length) return UI.toast('Nothing selected');
+  if(!aff) return UI.toast('Pick a destination affiliation');
+  if(!confirm(`Reassign ${ids.length} producer(s) to the selected affiliation?`)) return;
+  const r=await API.rpc('adm_reassign_producers',{p_ids:ids,p_affiliation_id:aff});
+  UI.toast(r.ok?`Reassigned ${r.reassigned}`:r.error);
+  if(r.ok){AFF_CACHE=null;loadProducers();}
 }
 async function producerDetail(id){
-  const d=await API.rpc('adm_producer_detail',{p_id:id});
+  const d=await API.rpc('adm_producer_full',{p_id:id});
   if(!d.ok) return UI.toast(d.error);
-  const p=d.producer, pr=d.profile||{};
+  const p=d.producer, pr=d.profile||{}, sig=d.signature||{}, eft=d.eft, fin=d.finra;
+  const sect=(title,badge,inner)=>`<details class="sec"><summary>${title} ${badge||''}</summary><div class="inner">${inner}</div></details>`;
+  const cnt=a=>`<span class="chip ${a&&a.length?'c-acc':'c-dim'}">${a?a.length:0}</span>`;
   UI.openDrawer(`
   <div class="row" style="justify-content:space-between"><h2>${esc(p.first_name)} ${esc(p.last_name)}</h2>
     <button class="sec" onclick="UI.closeDrawer()">Close</button></div>
   <div class="pill-row">${UI.chipDba(pr.dba_type)} ${UI.chipStage(p.contract_status||p.stage)}
-    ${d.affiliation?`<span class="chip c-acc">${esc(d.affiliation.name)}</span>`:''}</div>
+    ${d.affiliation?`<span class="chip c-acc">${esc(d.affiliation.name)}</span>`:''}
+    ${p.writing_number?`<span class="chip c-gold">W# ${esc(p.writing_number)}</span>`:''}</div>
   ${!pr.dba_type&&API.canWrite()?`<div class="note">Business type not defined — by convention this usually means LOA.
     <button class="warn" style="margin-left:8px;padding:4px 10px" onclick="setDba('${p.id}','loa')">Set LOA</button>
     <button class="sec" style="padding:4px 10px" onclick="setDba('${p.id}','individual')">Individual</button>
     <button class="sec" style="padding:4px 10px" onclick="setDba('${p.id}','business')">Business entity</button></div>`:''}
   <div class="grid2">
     <div><h3>Contact</h3><div class="kv"><b>Email</b>${esc(p.email)}</div><div class="kv"><b>Phone</b>${esc(p.phone||'—')}</div>
-      <div class="kv"><b>NPN</b>${esc(p.npn||'—')}</div><div class="kv"><b>Resident</b>${esc(pr.res_city||'')} ${esc(pr.res_state||'')}</div></div>
+      <div class="kv"><b>NPN</b>${esc(p.npn||'—')}</div><div class="kv"><b>SSN</b>${pr.ssn_last4?'••'+esc(pr.ssn_last4):'—'}</div>
+      <div class="kv"><b>DOB</b>${fmtD(pr.dob)}</div>
+      <div class="kv"><b>Resident</b>${esc(pr.res_city||'')} ${esc(pr.res_state||'')}</div></div>
     <div><h3>Business / DBA</h3><div class="kv"><b>Entity</b>${esc(pr.business_name||'—')}</div><div class="kv"><b>TIN</b>${esc(pr.tin?'••'+String(pr.tin).slice(-4):'—')}</div>
       <div class="kv"><b>Corp NPN</b>${esc(pr.corporate_lic_number||'—')}</div>
       ${(d.dba||[]).map(x=>`<div class="kv"><b>DBA</b>${esc(x.dba_name)} (${esc(x.entity_type||'')})</div>`).join('')}</div>
   </div>
+  ${sect('Licenses',cnt(d.licenses),(d.licenses||[]).length?`<table><tr><th>State</th><th>License #</th><th>Class</th><th>Res</th><th>Status</th><th>Expires</th><th>LOAs</th></tr>`+
+    d.licenses.map(l=>`<tr><td><b>${esc(l.state)}</b></td><td>${esc(l.license_no||'—')}</td><td>${esc(l.class||'—')}</td>
+    <td>${l.resident?'✓':''}</td><td>${(l.status||'').toLowerCase()==='active'?'<span class="chip c-ok">Active</span>':`<span class="chip c-dim">${esc(l.status||'—')}</span>`}</td>
+    <td>${l.expires&&new Date(l.expires)<new Date(Date.now()+60*864e5)?`<span class="chip c-warn">${fmtD(l.expires)}</span>`:fmtD(l.expires)}</td>
+    <td class="muted">${esc(l.loas||'')}</td></tr>`).join('')+'</table>':'<div class="muted">No synced licenses (NPN not in license feed yet).</div>')}
+  ${sect('Background & disclosures',(d.disclosures_yes||[]).length?`<span class="chip c-warn">${d.disclosures_yes.length} YES</span>`:`<span class="chip c-ok">${d.disclosures_answered||0} answered</span>`,
+    ((d.disclosures_yes||[]).length?d.disclosures_yes.map(x=>`<div class="kv" style="margin:3px 0"><span class="chip c-warn">YES</span> ${esc(x.q||x.code)}</div>`).join(''):'<div class="muted">No affirmative disclosure answers.</div>')+
+    (d.background&&d.background.explanation?`<div class="note">Explanation: ${esc(d.background.explanation)}</div>`:''))}
+  ${sect('FINRA',fin&&(fin.finra_registered||fin.is_registered)?'<span class="chip c-acc">registered</span>':'<span class="chip c-dim">no</span>',
+    fin?`<div class="kv"><b>CRD</b>${esc(fin.crd_number||'—')}</div><div class="kv"><b>Registered</b>${fin.finra_registered||fin.is_registered?'yes':'no'}</div>`:'<div class="muted">Not provided.</div>')}
+  ${sect('Banking / EFT',eft?'<span class="chip c-ok">on file</span>':'<span class="chip c-bad">missing</span>',
+    eft?`<div class="kv"><b>Bank</b>${esc(eft.bank_name||'—')}</div><div class="kv"><b>Type</b>${esc(eft.account_type||'—')}</div>
+    <div class="kv"><b>Routing</b>••${esc(eft.routing_last4||'')}</div><div class="kv"><b>Account</b>••${esc(eft.account_last4||'')}</div>`:'<div class="muted">No EFT on file.</div>')}
+  ${sect('E&amp;O',cnt(d.eo),(d.eo||[]).length?d.eo.map(x=>`<div class="kv" style="margin:3px 0"><b>${esc(x.provider||x.carrier_name||'Policy')}</b>
+    #${esc(x.policy_number||'—')} · exp ${fmtD(x.expiration_date||x.expiry_date)}</div>`).join(''):'<div class="muted">None.</div>')}
+  ${sect('Employment history',cnt(d.employment),(d.employment||[]).length?`<table><tr><th>Company</th><th>Position</th><th>From</th><th>To</th></tr>`+
+    d.employment.map(x=>`<tr><td>${esc(x.company)}</td><td>${esc(x.position||'—')}</td><td>${fmtD(x.from_date)}</td><td>${x.is_current?'current':fmtD(x.to_date)}</td></tr>`).join('')+'</table>':'<div class="muted">None.</div>')}
+  ${sect('Training',cnt(d.training),(d.training||[]).length?d.training.map(x=>`<div class="kv" style="margin:3px 0"><b>${esc(x.course_type||'course')}</b>
+    ${esc(x.provider||'')} · ${x.expiration_date?'exp '+fmtD(x.expiration_date):'completed '+fmtD(x.completed_date)}</div>`).join(''):'<div class="muted">None.</div>')}
+  ${sect('Signature',sig.has_image?'<span class="chip c-ok">on file</span>':'<span class="chip c-bad">missing</span>',
+    sig.has_image?`<div class="kv"><b>Signed</b>${fmtD(sig.signed_at)}</div><div class="kv"><b>Authorization</b>v${esc(sig.auth_version||'1')}</div>`:'<div class="muted">Not signed.</div>')}
+  ${sect('Carrier contracts',cnt(d.carrier_contracts),(d.carrier_contracts||[]).length?`<table><tr><th>Carrier</th><th>Writing #</th><th>Start</th><th>Status</th><th>Products</th></tr>`+
+    d.carrier_contracts.map(x=>`<tr><td><b>${esc(x.carrier_name)}</b></td><td>${esc(x.writing_number||'—')}</td><td>${fmtD(x.start_date)}</td>
+    <td>${x.status==='active'?'<span class="chip c-ok">active</span>':`<span class="chip c-dim">${esc(x.status)}</span>`}</td>
+    <td class="muted">${esc(x.products||'')}</td></tr>`).join('')+'</table>':'<div class="muted">No contract records yet (populated by sync + processors).</div>')}
+  ${sect('Documents',cnt(d.documents),(d.documents||[]).length?`<div class="pill-row">${d.documents.map(x=>`<span class="chip c-dim">${esc(x.kind)}: ${esc(x.filename)}</span>`).join('')}</div>`:'<div class="muted">None.</div>')}
   <h3>Contract requests</h3>
-  ${(d.requests||[]).length?`<table><tr><th>Carrier</th><th>Stage</th><th>Level</th><th>Created</th><th>Submitted</th></tr>`+
+  ${(d.requests||[]).length?`<table><tr><th>Carrier</th><th>Stage</th><th>Level</th><th>Completed by</th><th>Created</th><th>Submitted</th></tr>`+
     d.requests.map(r=>`<tr class="click" onclick="UI.closeDrawer();location.hash='#requests';setTimeout(()=>requestDetail('${r.id}'),300)">
     <td>${esc(r.carrier_name||r.carrier_key)}</td><td>${UI.chipStage(r.stage)}</td><td>${esc(r.comp_level||'—')}</td>
-    <td>${fmtD(r.created_at)}</td><td>${fmtD(r.submitted_at)}</td></tr>`).join('')+'</table>':'<div class="muted">None.</div>'}
-  <h3>Documents</h3>
-  ${(d.documents||[]).length?`<div class="pill-row">${d.documents.map(x=>`<span class="chip c-dim">${esc(x.kind)}: ${esc(x.filename)}</span>`).join('')}</div>`:'<div class="muted">None.</div>'}`);
+    <td>${esc(r.completed_by||'—')}</td><td>${fmtD(r.created_at)}</td><td>${fmtD(r.submitted_at)}</td></tr>`).join('')+'</table>':'<div class="muted">None.</div>'}`);
 }
 async function setDba(id,t){ const r=await API.rpc('adm_set_dba',{p_id:id,p_dba_type:t}); UI.toast(r.ok?'DBA set to '+t:r.error); if(r.ok) producerDetail(id); }
 
@@ -216,13 +274,14 @@ async function Requests(){
     <div class="row"><select id="r_stage" onchange="loadRequests()">
       <option value="">All stages</option><option>draft</option><option>ready</option><option>submitted</option><option>completed</option><option>declined</option></select>
       <input id="r_q" placeholder="Search agent or carrier…" onkeydown="if(event.key==='Enter')loadRequests()">
-      <button onclick="loadRequests()">Search</button></div></div>
+      <button onclick="loadRequests()">Search</button>
+      <button class="sec" onclick="UI.csv(window._req,'contract_requests.csv')">Export CSV</button></div></div>
   <div class="card" id="r_tbl"></div>`;
   loadRequests();
 }
 async function loadRequests(){
   const r=await API.rpc('adm_requests',{p_stage:$('#r_stage').value||null,p_search:$('#r_q').value.trim()||null});
-  const rows=r.rows||[];
+  const rows=r.rows||[]; window._req=rows;
   $('#r_tbl').innerHTML=rows.length?`<table><tr><th>Agent</th><th>Carrier</th><th>Affiliation</th><th>Stage</th><th>Level</th><th>Profile</th><th>Created</th></tr>`+
     rows.map(x=>`<tr class="click" onclick="requestDetail('${x.id}')">
     <td><b>${esc(x.producer_name)}</b><div class="muted">${esc(x.email)}</div></td><td>${esc(x.carrier_name||x.carrier_key)}</td>
@@ -238,11 +297,13 @@ async function requestDetail(id){
   const lines=cfg.lines||[]; const defl=(r.products&&r.products.length?r.products:cfg.default_lines)||[];
   const gate=(k,lbl,okTxt,badTxt)=>`<div class="gate"><span class="dot ${g[k]?'g':'r'}"></span>${lbl}: <b>${g[k]?okTxt:badTxt}</b></div>`;
   const agentReady=g.profile&&g.signature;
+  const myName=(API.me&&API.me.full_name)||'';
   UI.openDrawer(`
   <div class="row" style="justify-content:space-between"><h2>${esc(p.name)} — ${esc(r.carrier_name||r.carrier_key)}</h2>
     <button class="sec" onclick="UI.closeDrawer()">Close</button></div>
   <div class="pill-row">${UI.chipStage(r.stage)} <span class="chip c-acc">${esc(p.affiliation||'no affiliation')}</span>
-    ${UI.chipDba(p.dba_type)} ${cfg.signature_block==='recommending_agency_manager'?'<span class="chip c-gold">recommending agency + manager sig</span>':''}</div>
+    ${UI.chipDba(p.dba_type)} ${cfg.signature_block==='recommending_agency_manager'?'<span class="chip c-gold">recommending agency + manager sig</span>':''}
+    ${r.completed_by?`<span class="chip c-ok">completed by ${esc(r.completed_by)}</span>`:''}</div>
   ${cfg.deselect_note?`<div class="note">${esc(cfg.deselect_note)}</div>`:''}
   <div class="grid2">
     <div><h3>Agent-owned (gates)</h3>
@@ -272,7 +333,9 @@ async function requestDetail(id){
       <div class="row" style="margin-top:6px"><input id="rq_newq" placeholder="add question key" style="width:160px"><button class="sec" onclick="addQ()">+ question</button></div>
     </div>
   </div>
-  <div class="row" style="margin-top:14px">
+  ${API.canWrite()?`<div class="kv" style="margin-top:12px"><b>Completed by <span style="color:var(--bad)">*</span></b>
+    <input id="rq_cby" value="${esc(r.completed_by||myName)}" placeholder="Your name (required to continue)" style="width:240px"></div>`:''}
+  <div class="row" style="margin-top:10px">
     ${API.canWrite()?`<button onclick="saveRequest('${r.id}')">Save processor fields</button>`:''}
     ${API.canWrite()&&cfg.generator_fn?`<button class="ok" ${agentReady?'':'disabled title="agent gates incomplete"'} onclick="genPacket('${r.id}','${esc(cfg.generator_fn)}')">Generate packet</button>`:''}
     ${API.canSubmit()?`<button class="warn" ${agentReady?'':'disabled'} onclick="markSubmitted('${r.id}')">Mark submitted</button>`:'<span class="chip c-warn">complete-only role: submission handled by a submitter</span>'}
@@ -287,10 +350,12 @@ async function gridLookup(ck){
   if(r.ok){$('#rq_level').value=r.level;UI.toast(`Grid: ${t} → level ${r.level}`);}else UI.toast(r.error);
 }
 async function saveRequest(id){
+  const cby=($('#rq_cby')?$('#rq_cby').value:'').trim();
+  if(!cby){UI.toast('Completed by is required — enter your name to continue');$('#rq_cby').focus();return;}
   const prods=[...document.querySelectorAll('[data-line]')].filter(c=>c.checked).map(c=>c.dataset.line);
   const qa={};document.querySelectorAll('[data-qk]').forEach(i=>{qa[i.dataset.qk]=i.value;});
   const r=await API.rpc('adm_request_complete',{p_id:id,p_products:JSON.stringify(prods)===JSON.stringify([])?null:prods,
-    p_upline:$('#rq_upline').value.trim()||null,p_comp_level:$('#rq_level').value.trim()||null,p_carrier_answers:qa});
+    p_upline:$('#rq_upline').value.trim()||null,p_comp_level:$('#rq_level').value.trim()||null,p_carrier_answers:qa,p_completed_by:cby});
   UI.toast(r.ok?'Saved':r.error);
 }
 async function genPacket(id,fn){
@@ -315,7 +380,7 @@ async function Affiliations(){
   $('#view').innerHTML=`
   <div class="card"><div class="row" style="justify-content:space-between"><h2>Affiliations</h2>
     ${API.canWrite()?'<button onclick="affEdit(null)">+ Add affiliation</button>':''}</div>
-  <div class="muted">Attribution backbone — completing a contract writes the producer to its affiliation automatically.</div></div>
+  <div class="muted">Attribution backbone — completing a contract writes the producer to its affiliation automatically. Bulk moves: select producers in the directory and use Reassign.</div></div>
   <div class="card"><table><tr><th>Name</th><th>Business</th><th>Email</th><th>Agents</th><th>Carriers</th><th></th></tr>
   ${AFF_CACHE.map(a=>`<tr><td><b>${esc(a.name)}</b></td><td>${esc(a.business_name||'—')}</td><td>${esc(a.contracting_email||'—')}</td>
     <td><a href="#producers" onclick="setTimeout(()=>{document.querySelector('#p_aff').value='${a.id}';loadProducers();},300)">${a.agent_count}</a></td>
@@ -457,6 +522,68 @@ async function pfSave(id){
   }catch(e){UI.toast('Invalid JSON: '+e.message);}
 }
 
+/* ================= ALERTS ================= */
+async function Alerts(){
+  const r=await API.rpc('adm_alerts');
+  if(!r.ok){$('#view').innerHTML=`<div class="card">${esc(r.error)}</div>`;return;}
+  const rows=r.rows||[]; window._alerts=rows;
+  const kind=k=>({license:'c-acc',eo:'c-gold',training:'c-warn',agency_eo:'c-bad'})[k]||'c-dim';
+  $('#view').innerHTML=`
+  <div class="card"><div class="row" style="justify-content:space-between"><h2>Alerts</h2>
+    <button class="sec" onclick="UI.csv(window._alerts,'alerts.csv')">Export CSV</button></div>
+    <div class="muted">Licenses, E&amp;O and training expiring within 60 days (or already expired), plus the agency's own E&amp;O.</div></div>
+  <div class="card">${rows.length?`<table><tr><th>Kind</th><th>Producer</th><th>Affiliation</th><th>Detail</th><th>Expires</th><th></th></tr>`+
+    rows.map(x=>`<tr ${x.producer_id?`class="click" onclick="producerDetail('${x.producer_id}')"`:''}>
+    <td><span class="chip ${kind(x.kind)}">${esc(x.kind)}</span></td><td><b>${esc(x.producer_name)}</b></td>
+    <td>${esc(x.affiliation_name||'—')}</td><td>${esc(x.detail||'')}</td><td>${fmtD(x.expires)}</td>
+    <td>${x.severity==='expired'?'<span class="chip c-bad">expired</span>':'<span class="chip c-warn">expiring</span>'}</td></tr>`).join('')+'</table>'
+    :'<div class="muted">Nothing expiring within 60 days. 🎉</div>'}</div>`;
+}
+
+/* ================= AGENCY (settings + principals + agency E&O) ================= */
+async function Agency(){
+  const r=await API.rpc('adm_agency_settings');
+  if(!r.ok){$('#view').innerHTML=`<div class="card">${esc(r.error)}</div>`;return;}
+  const s=r.settings||{}; const ro=API.isFull()?'':'readonly disabled';
+  const F=(id,lbl,val,w)=>`<div class="kv" style="margin:6px 0"><b>${lbl}</b><input id="ag_${id}" value="${esc(val||'')}" style="width:${w||220}px" ${ro}></div>`;
+  $('#view').innerHTML=`
+  <div class="card"><h2>Agency settings</h2>
+    <div class="muted">The agency's own identity, principals and E&amp;O — used by packet generators and reports. ${API.isFull()?'':'Read-only for your role.'}</div>
+    <div class="grid2" style="margin-top:8px">
+      <div><h3>General info</h3>
+        ${F('legal','Legal name',s.legal_name)}${F('dba','DBA name',s.dba_name)}
+        ${F('ein','EIN',s.ein,140)}${F('npn','Corporate NPN',s.corporate_npn,140)}
+        ${F('phone','Phone',s.phone,160)}${F('email','Email',s.email)}
+        ${F('web','Website',s.website)}
+        ${F('a1','Address 1',s.addr1)}${F('a2','Address 2',s.addr2)}
+        ${F('city','City',s.city,160)}${F('state','State',s.state,70)}${F('zip','Zip',s.zip,100)}</div>
+      <div><h3>Agency E&amp;O</h3>
+        ${F('eop','Provider',s.eo_provider)}${F('eon','Policy #',s.eo_policy_number)}
+        ${F('eoe','Coverage each',s.eo_coverage_each,140)}${F('eoa','Coverage aggregate',s.eo_coverage_aggregate,140)}
+        <div class="kv" style="margin:6px 0"><b>Effective</b><input id="ag_eff" type="date" value="${esc(s.eo_effective||'')}" ${ro}></div>
+        <div class="kv" style="margin:6px 0"><b>Expiration</b><input id="ag_exp" type="date" value="${esc(s.eo_expiration||'')}" ${ro}></div>
+        <h3>DBA template</h3>
+        <textarea id="ag_dbat" style="width:100%" rows="3" ${ro}>${esc(s.dba_template||'')}</textarea></div>
+    </div>
+    <h3>Principals (JSON: [{"name","title","npn","signature_role"}])</h3>
+    <textarea id="ag_prin" style="width:100%" rows="4" ${ro}>${esc(JSON.stringify(s.principals||[],null,1))}</textarea>
+    ${API.isFull()?`<div class="row" style="margin-top:10px"><button onclick="agencySave()">Save</button>
+      <span class="muted">Last updated ${fmtD(s.updated_at)}${s.updated_by?' by '+esc(s.updated_by):''}</span></div>`:''}</div>`;
+}
+async function agencySave(){
+  let prin;
+  try{ prin=JSON.parse($('#ag_prin').value||'[]'); }catch(e){ return UI.toast('Principals JSON invalid: '+e.message); }
+  const p={legal_name:$('#ag_legal').value.trim(),dba_name:$('#ag_dba').value.trim()||null,ein:$('#ag_ein').value.trim()||null,
+    corporate_npn:$('#ag_npn').value.trim()||null,phone:$('#ag_phone').value.trim()||null,email:$('#ag_email').value.trim()||null,
+    website:$('#ag_web').value.trim()||null,addr1:$('#ag_a1').value.trim()||null,addr2:$('#ag_a2').value.trim()||null,
+    city:$('#ag_city').value.trim()||null,state:$('#ag_state').value.trim()||null,zip:$('#ag_zip').value.trim()||null,
+    principals:prin,eo_provider:$('#ag_eop').value.trim()||null,eo_policy_number:$('#ag_eon').value.trim()||null,
+    eo_coverage_each:$('#ag_eoe').value.trim()||null,eo_coverage_aggregate:$('#ag_eoa').value.trim()||null,
+    eo_effective:$('#ag_eff').value||null,eo_expiration:$('#ag_exp').value||null,dba_template:$('#ag_dbat').value.trim()||null};
+  const r=await API.rpc('adm_agency_settings_save',{p});
+  UI.toast(r.ok?'Saved':r.error); if(r.ok) Agency();
+}
+
 /* ================= ADMINS ================= */
 async function Admins(){
   const r=await API.rpc('adm_admins');
@@ -465,7 +592,7 @@ async function Admins(){
   $('#view').innerHTML=`
   <div class="card"><div class="row" style="justify-content:space-between"><h2>Admins & roles</h2>
     <button onclick="admEdit(null)">+ Add admin</button></div>
-    <div class="muted">Affiliate roles are scoped to one affiliation. “Complete without submit” = processes everything, a submitter double-checks.</div></div>
+    <div class="muted">Affiliate roles are scoped to one affiliation. “Complete without submit” = processes everything, a submitter double-checks. Completions are stamped with the rep's name (required).</div></div>
   <div class="card"><table><tr><th>Name</th><th>Email</th><th>Role</th><th>Scope</th><th>Submit</th><th>Active</th><th></th></tr>
   ${rows.map(a=>`<tr><td><b>${esc(a.full_name||'—')}</b></td><td>${esc(a.email)}</td>
     <td><span class="chip c-gold">${esc(a.role)}</span></td><td>${esc(a.affiliation_name||'org-wide')}</td>
