@@ -525,7 +525,18 @@ function drawContract(P){
    <h2 class="sec" style="margin-top:22px">My requests</h2>
    <div>${rows||'<p class="sechint">No contract requests yet.</p>'}</div></div>`;
 }
-function startWizard(){ if(!CARRIERS.length){ alert("No carriers are available yet."); return; } WIZ={step:0, carrier:CARRIERS[0].carrier_key, request_type:"contract", states:[], states_extra:"", products:[], comp_level:"", carrier_answers:{}, carrier_expl:"", aml_through:"limra", ack_questionnaire:false, submitting:false, done:null, error:null}; drawWizard($("panel")); }
+async function startWizard(){ if(!CARRIERS.length){ alert("No carriers are available yet."); return; }
+  const defAff=(PRODUCER&&PRODUCER.affiliation_id)||(AFF?Number(AFF):null);
+  WIZ={step:0, carrier:CARRIERS[0].carrier_key, request_type:"contract", states:[], states_extra:"", products:[], comp_level:"",
+       affiliation_id:defAff, upline:"", upline_id:null, _affs:[], _uplines:[],
+       carrier_answers:{}, carrier_expl:"", aml_through:"limra", ack_questionnaire:false, submitting:false, done:null, error:null};
+  try{ WIZ._affs=(await sb.rpc("public_affiliations")).data||[]; }catch(e){ WIZ._affs=[]; }
+  await wizLoadUplines();
+  drawWizard($("panel"));
+}
+async function wizLoadUplines(){ WIZ._uplines=[]; if(!WIZ.affiliation_id) return; try{ WIZ._uplines=(await sb.rpc("affiliation_uplines",{p_affiliation_id:WIZ.affiliation_id})).data||[]; }catch(e){ WIZ._uplines=[]; } }
+async function wizSetAff(v){ wizCapture(); WIZ.affiliation_id=v?Number(v):null; WIZ.upline=""; WIZ.upline_id=null; await wizLoadUplines(); drawWizard($("panel")); }
+function wizSetUpline(v){ const u=(WIZ._uplines||[]).find(x=>String(x.id)===String(v)); WIZ.upline_id=v||null; WIZ.upline=u?u.name:""; }
 function cancelWizard(){ WIZ=null; render(); go("contract"); }
 function wizAns(key,val){ const e=$("w_expl"); if(e) WIZ.carrier_expl=e.value; WIZ.carrier_answers[key]=val; drawWizard($("panel")); }
 function wizAml(v){ WIZ.aml_through=v; drawWizard($("panel")); }
@@ -548,7 +559,11 @@ function drawWizard(P){
     body=`<label>States to appoint in</label><div style="margin:6px 0 8px">${stateBoxes}</div>
      <label>Other states (comma-separated)</label><input id="w_states_extra" placeholder="e.g. TX, FL" value="${esc(WIZ.states_extra||'')}"/>
      <label style="margin-top:14px">Products</label><div style="margin:6px 0 8px">${prods}</div>
-     <label>Requested contract level (optional)</label><input id="w_comp" placeholder="e.g. Street, 100% — or leave blank" value="${esc(WIZ.comp_level||'')}"/>`;
+     <label>Requested contract level (optional)</label><input id="w_comp" placeholder="e.g. Street, 100% — or leave blank" value="${esc(WIZ.comp_level||'')}"/>
+     <label style="margin-top:14px">Affiliation (distribution line)</label>
+     <select id="w_aff" onchange="wizSetAff(this.value)"><option value="">— select —</option>${(WIZ._affs||[]).map(a=>`<option value="${a.id}" ${String(WIZ.affiliation_id)===String(a.id)?'selected':''}>${esc(a.name)}</option>`).join("")}</select>
+     <label>Direct upline</label>
+     <select id="w_upline" onchange="wizSetUpline(this.value)" ${(WIZ._uplines&&WIZ._uplines.length)?'':'disabled'}><option value="">${WIZ.affiliation_id?((WIZ._uplines&&WIZ._uplines.length)?'— select your direct upline —':'no uplines found for this affiliation'):'select an affiliation first'}</option>${(WIZ._uplines||[]).map(u=>`<option value="${u.id}" ${String(WIZ.upline_id)===String(u.id)?'selected':''}>${esc(u.name)}${u.writing_number?` (${esc(u.writing_number)})`:''}</option>`).join("")}</select>`;
   } else if(step===2){
     const ok=amlOnFile(); const at=WIZ.aml_through||'limra'; const cn=carrierName(WIZ.carrier);
     body=`<div class="q"><div class="qt">Anti-Money Laundering (AML) training</div>${ok?`<p class="saved">✓ AML course on file — you're set.</p>
@@ -584,6 +599,8 @@ function drawWizard(P){
       <div class="list-row"><span>States</span><span>${allStates.length?esc(allStates.join(', ')):'<span class="sechint">none selected</span>'}</span></div>
       <div class="list-row"><span>Products</span><span>${WIZ.products.length?esc(WIZ.products.join(', ')):'<span class="sechint">none selected</span>'}</span></div>
       <div class="list-row"><span>Contract level</span><span>${esc(WIZ.comp_level||'—')}</span></div>
+      <div class="list-row"><span>Affiliation</span><span>${esc(((WIZ._affs||[]).find(a=>String(a.id)===String(WIZ.affiliation_id))||{}).name||'—')}</span></div>
+      <div class="list-row"><span>Direct upline</span><span>${esc(WIZ.upline||'—')}</span></div>
      </div>
      <div class="q"><div class="qt">Signature</div>${sigOnFile()&&SIGURL?`<div style="background:#fff;border-radius:8px;padding:8px;display:inline-block;border:1px solid var(--line)"><img src="${SIGURL}" style="max-height:70px;max-width:280px"/></div><p class="saved" style="margin-top:6px">✓ Your signature authorization is on file and will be applied to this packet.</p>`:`<p class="sechint" style="color:var(--red)">No signature on file — add one under <a class="dl" onclick="WIZ=null;go('signature')">Sign authorization</a> before submitting.</p>`}</div>
      ${WIZ.error?`<div class="gate blocked" style="margin:8px 0">${esc(WIZ.error)}</div>`:''}`;
@@ -597,13 +614,14 @@ function wizAllStates(){ const s=new Set(WIZ.states.map(x=>x.toUpperCase())); (W
 function wizCapture(){
   const step=WIZ.step;
   if(step===0){ const c=$("w_carrier"); if(c) WIZ.carrier=c.value; }
-  if(step===1){ WIZ.states=Array.from(document.querySelectorAll(".w_state:checked")).map(x=>x.value); const ex=$("w_states_extra"); WIZ.states_extra=ex?ex.value:""; WIZ.products=Array.from(document.querySelectorAll(".w_prod:checked")).map(x=>x.value); const cp=$("w_comp"); WIZ.comp_level=cp?cp.value.trim():""; }
+  if(step===1){ WIZ.states=Array.from(document.querySelectorAll(".w_state:checked")).map(x=>x.value); const ex=$("w_states_extra"); WIZ.states_extra=ex?ex.value:""; WIZ.products=Array.from(document.querySelectorAll(".w_prod:checked")).map(x=>x.value); const cp=$("w_comp"); WIZ.comp_level=cp?cp.value.trim():""; const af=$("w_aff"); if(af) WIZ.affiliation_id=af.value?Number(af.value):null; const up=$("w_upline"); if(up){ WIZ.upline_id=up.value||null; const u=(WIZ._uplines||[]).find(x=>String(x.id)===String(up.value)); WIZ.upline=u?u.name:""; } }
   if(step===4){ const e=$("w_expl"); if(e) WIZ.carrier_expl=e.value; }
   if(step===5){ const a=$("w_ackqn"); WIZ.ack_questionnaire=a?a.checked:false; }
 }
 function wizBack(){ wizCapture(); WIZ.step=Math.max(0,WIZ.step-1); WIZ.error=null; drawWizard($("panel")); }
 async function wizNext(){ wizCapture(); const step=WIZ.step;
   if(step===0 && !WIZ.carrier){ WIZ.error="Choose a carrier."; drawWizard($("panel")); return; }
+  if(step===0){ const dead=['declined','discarded','out_of_date']; const dup=(REQUESTS||[]).find(r=>(r.carrier_key===WIZ.carrier)&&!dead.includes(String(r.stage||'').toLowerCase())); if(dup){ alert("Carrier contract already submitted. Contact your upline for further information."); return; } }
   if(step===1 && wizAllStates().length===0){ alert("Select at least one state."); return; }
   if(step===1 && WIZ.products.length===0){ alert("Select at least one product."); return; }
   if(step===4){ const qs=CARRIER_QUESTIONS[WIZ.carrier]||[]; const un=qs.filter(q=>WIZ.carrier_answers[q.key]!==true&&WIZ.carrier_answers[q.key]!==false);
@@ -615,7 +633,7 @@ async function wizNext(){ wizCapture(); const step=WIZ.step;
   WIZ.submitting=true; WIZ.error=null; drawWizard($("panel"));
   try{
     const carrierAnswers=Object.assign({}, WIZ.carrier_answers, {explanation:WIZ.carrier_expl||"", aml_taken:amlOnFile(), aml_through:WIZ.aml_through||"limra"});
-    const {data:reqId,error}=await sb.rpc("my_submit_request",{p_carrier_key:WIZ.carrier,p_request_type:WIZ.request_type,p_states:wizAllStates(),p_products:WIZ.products,p_comp_level:WIZ.comp_level||null,p_carrier_answers:carrierAnswers});
+    const {data:reqId,error}=await sb.rpc("my_submit_request",{p_carrier_key:WIZ.carrier,p_request_type:WIZ.request_type,p_states:wizAllStates(),p_products:WIZ.products,p_comp_level:WIZ.comp_level||null,p_carrier_answers:carrierAnswers,p_upline:WIZ.upline||null});
     if(error) throw error;
     try{ await sb.functions.invoke("submit-carrier-packet",{body:{request_id:reqId}}); }catch(e){ /* request recorded; email is best-effort */ }
     const c=CARRIERS.find(x=>x.carrier_key===WIZ.carrier)||{};
