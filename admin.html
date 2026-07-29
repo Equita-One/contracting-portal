@@ -58,6 +58,13 @@ details.sec .inner{padding:4px 12px 10px}
 .noteline{border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin:8px 0;background:var(--panel)}
 .noteline .meta{font-size:11.5px;color:var(--dim);margin-bottom:4px}
 @media(max-width:900px){.nmodal{width:100vw}}
+.doccards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-top:12px}
+.doccard{border:1px solid var(--line);background:var(--panel2);border-radius:12px;padding:12px;cursor:pointer;transition:background .15s,border-color .15s}
+.doccard:hover{background:#1f6feb1a;border-color:var(--acc)}
+.doccard .dc-row{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.doccard .dc-name{font-weight:600;font-size:13px;color:var(--txt);word-break:break-word;line-height:1.3}
+.doccard .dc-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:7px;font-size:11px;color:var(--dim)}
+.doccard .dc-open{margin-top:9px;font-size:12px;color:var(--acc);font-weight:600}
 </style>
 </head>
 <body>
@@ -217,9 +224,61 @@ async function bulkReassign(){
   UI.toast(r.ok?`Reassigned ${r.reassigned}`:r.error);
   if(r.ok){AFF_CACHE=null;loadProducers();}
 }
+/* -------- SureLC document cards: roll each file under its matching section, click to open PDF -------- */
+function docSection(kind){
+  const k=(kind||'').toLowerCase();
+  if(k==='check'||k.includes('void')||k.includes('eft')||k.includes('bank')) return 'banking';
+  if(k==='eno'||k.includes('e&o')||k.includes('e & o')||k.includes('errors')||k.includes('liability')) return 'eo';
+  if(k==='training'||k.includes('aml')||k.includes('ltc')||k.includes('annuity training')) return 'training';
+  if(k==='explanation'||k.includes('explan')||k.includes('background')||k.includes('disclosure')) return 'background';
+  if(k.includes('signature')) return 'signature';
+  if(k==='license'||k.includes('license')||k.includes('nipr')) return 'licenses';
+  if(k.includes('finra')||k.includes('u4')||k.includes('u-4')) return 'finra';
+  return 'other';
+}
+function docCard(x){
+  return `<div class="doccard" onclick="openDoc('${x.id}',this)" title="Open PDF">
+    <div class="dc-row"><span class="dc-name">${esc(x.filename||'Document')}</span><span class="chip c-acc">PDF</span></div>
+    <div class="dc-meta"><span>${esc(x.kind||'Document')}</span><span>${fmtD(x.created_at)}</span>${x.is_generated?'<span class="chip c-dim">generated</span>':''}</div>
+    <div class="dc-open">Open PDF &#8599;</div></div>`;
+}
+function docCardsFor(sec){
+  const arr=(window._DOCS||[]).filter(x=>docSection(x.kind)===sec);
+  return arr.length?`<div class="doccards">${arr.map(docCard).join('')}</div>`:'';
+}
+function injectDocCards(){
+  document.querySelectorAll('#drawer details.sec').forEach(det=>{
+    const sum=det.querySelector('summary'); const inner=det.querySelector('.inner'); if(!sum||!inner) return;
+    const t=(sum.textContent||'').trim().toLowerCase(); let key=null;
+    if(t.startsWith('licenses')) key='licenses';
+    else if(t.startsWith('background')) key='background';
+    else if(t.startsWith('banking')) key='banking';
+    else if(t.startsWith('e&o')||t.startsWith('e & o')) key='eo';
+    else if(t.startsWith('training')) key='training';
+    else if(t.startsWith('signature')) key='signature';
+    else if(t.startsWith('finra')) key='finra';
+    else if(t.startsWith('documents')) key='other';
+    if(!key) return;
+    const html=docCardsFor(key); if(!html) return;
+    inner.insertAdjacentHTML('beforeend', html);
+    const n=(window._DOCS||[]).filter(x=>docSection(x.kind)===key).length;
+    if(n && !sum.querySelector('.docbadge')) sum.insertAdjacentHTML('beforeend', ` <span class="chip docbadge" style="background:#c9a22733;color:#c9a227">&#128206; ${n}</span>`);
+  });
+}
+async function openDoc(id,el){
+  try{ if(el){el.style.opacity='.6';el.style.pointerEvents='none';}
+    const {data:{session}}=await sb.auth.getSession();
+    const tok=session?session.access_token:SB_KEY;
+    const res=await fetch(`${SB_URL}/functions/v1/adm-doc-url`,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+tok},body:JSON.stringify({docId:id})});
+    const j=await res.json();
+    if(el){el.style.opacity='';el.style.pointerEvents='';}
+    if(j&&j.url) window.open(j.url,'_blank'); else UI.toast('Error: '+((j&&j.error)||res.status));
+  }catch(e){ if(el){el.style.opacity='';el.style.pointerEvents='';} UI.toast('Error: '+e.message); }
+}
 async function producerDetail(id){
   const d=await API.rpc('adm_producer_full',{p_id:id});
   if(!d.ok) return UI.toast(d.error);
+  try{ window._DOCS=((await API.rpc('adm_producer_docs',{p_id:id}))||{}).documents||[]; }catch(e){ window._DOCS=[]; }
   const p=d.producer, pr=d.profile||{}, sig=d.signature||{}, eft=d.eft, fin=d.finra;
   window._curP={id:p.id,name:((p.first_name||'')+' '+(p.last_name||'')).trim()};
   const sect=(title,badge,inner)=>`<details class="sec"><summary>${title} ${badge||''}</summary><div class="inner">${inner}</div></details>`;
@@ -270,12 +329,13 @@ async function producerDetail(id){
     d.carrier_contracts.map(x=>`<tr><td><b>${esc(x.carrier_name)}</b></td><td>${esc(x.writing_number||'—')}</td><td>${fmtD(x.start_date)}</td>
     <td>${x.status==='active'?'<span class="chip c-ok">active</span>':`<span class="chip c-dim">${esc(x.status)}</span>`}</td>
     <td class="muted">${esc(x.products||'')}</td></tr>`).join('')+'</table>':'<div class="muted">No contract records yet (populated by sync + processors).</div>')}
-  ${sect('Documents',cnt(d.documents),(d.documents||[]).length?`<div class="pill-row">${d.documents.map(x=>`<span class="chip c-dim">${esc(x.kind)}: ${esc(x.filename)}</span>`).join('')}</div>`:'<div class="muted">None.</div>')}
+  ${sect('Documents',cnt(d.documents),'<div class="muted" style="font-size:11px">Files are grouped under their matching section above. Anything uncategorized appears here.</div>')}
   <h3>Contract requests</h3>
   ${(d.requests||[]).length?`<table><tr><th>Carrier</th><th>Stage</th><th>Level</th><th>Completed by</th><th>Created</th><th>Submitted</th></tr>`+
     d.requests.map(r=>`<tr class="click" onclick="UI.closeDrawer();location.hash='#requests';setTimeout(()=>requestDetail('${r.id}'),300)">
     <td>${esc(r.carrier_name||r.carrier_key)}</td><td>${UI.chipStage(r.stage)}</td><td>${esc(r.comp_level||'—')}</td>
     <td>${esc(r.completed_by||'—')}</td><td>${fmtD(r.created_at)}</td><td>${fmtD(r.submitted_at)}</td></tr>`).join('')+'</table>':'<div class="muted">None.</div>'}`);
+  injectDocCards();
 }
 async function setDba(id,t){ const r=await API.rpc('adm_set_dba',{p_id:id,p_dba_type:t}); UI.toast(r.ok?'DBA set to '+t:r.error); if(r.ok) producerDetail(id); }
 
