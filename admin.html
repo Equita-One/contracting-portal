@@ -723,11 +723,28 @@ async function admEdit(a){
   <div class="kv" style="margin:8px 0"><b>Affiliation scope</b><select id="ad_a">${opts}</select></div>
   <div class="kv" style="margin:8px 0"><b>Can submit</b><select id="ad_s"><option value="true" ${a.can_submit?'selected':''}>yes</option><option value="false" ${!a.can_submit?'selected':''}>complete without submit</option></select></div>
   <div class="kv" style="margin:8px 0"><b>Active</b><select id="ad_x"><option value="true" ${a.active?'selected':''}>active</option><option value="false" ${!a.active?'selected':''}>disabled</option></select></div>
+  <div class="kv" style="margin:8px 0"><b>${a.id?'Reset password':'Password'}</b><input id="ad_pw" type="password" autocomplete="new-password" placeholder="${a.id?'leave blank to keep current':'min 8 characters'}"></div>
   <div class="row" style="margin-top:8px"><button onclick="admSave()">Save</button><button class="sec" onclick="UI.closeDrawer()">Cancel</button></div>`);
 }
 async function admSave(){
-  const r=await API.rpc('adm_admin_save',{p:{email:$('#ad_e').value.trim(),full_name:$('#ad_n').value.trim(),
-    role:$('#ad_r').value,affiliation_id:$('#ad_a').value||null,can_submit:$('#ad_s').value==='true',active:$('#ad_x').value==='true'}});
+  const email=$('#ad_e').value.trim(), full_name=$('#ad_n').value.trim();
+  const role=$('#ad_r').value, affiliation_id=$('#ad_a').value||null;
+  const can_submit=$('#ad_s').value==='true', active=$('#ad_x').value==='true';
+  const isNew=!$('#ad_e').readOnly;
+  const pw=($('#ad_pw')?$('#ad_pw').value:'')||'';
+  if(isNew && pw.length<8){ UI.toast('Set a password (min 8 characters) for the new user.'); return; }
+  if(pw && pw.length<8){ UI.toast('Password must be at least 8 characters.'); return; }
+  if(isNew || pw){
+    try{
+      const headers=API.secret?{'x-sweep-secret':API.secret}:{};
+      const {data,error}=await sb.functions.invoke('admin-create-user',{body:{email,password:pw,full_name,role,affiliation_id,can_submit,active},headers});
+      if(error) throw new Error((data&&data.error)||error.message);
+      if(data&&data.error) throw new Error(data.error);
+      UI.toast('Saved'); UI.closeDrawer(); Admins();
+    }catch(e){ UI.toast(e.message||String(e)); }
+    return;
+  }
+  const r=await API.rpc('adm_admin_save',{p:{email,full_name,role,affiliation_id,can_submit,active}});
   UI.toast(r.ok?'Saved':r.error); if(r.ok){UI.closeDrawer();Admins();}
 }
 
