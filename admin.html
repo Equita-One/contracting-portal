@@ -721,17 +721,37 @@ async function Firms(){
   <div class="card"><h2>Firms</h2><div class="row">
     <input id="f_q" placeholder="Search firm / LLC name…" style="min-width:280px" onkeydown="if(event.key==='Enter')loadFirms()">
     <button onclick="loadFirms()">Search</button></div>
-    <div class="muted">Find the principal behind an LLC. “not specified” = abandoned or deleted record.</div></div>
+    <div class="muted">Full SureLC firm view — hover the 🏢 (business) and ✉️ (mailing) icons for the full address. Find the principal behind an LLC. “not specified” = abandoned or deleted record.</div></div>
   <div class="card" id="f_tbl"><div class="muted">Search a firm name.</div></div>`;
+}
+function firmAddr(a1,a2,city,st,zip){
+  const l1=[a1,a2].filter(x=>x&&String(x).trim()).join(', ');
+  const l2=[[city,st].filter(x=>x&&String(x).trim()).join(', '),zip].filter(x=>x&&String(x).trim()).join(' ');
+  return [l1,l2].filter(x=>x).join('\n');
+}
+function addrIcon(icon,label,txt){
+  if(!txt) return `<span title="No ${label} address on file" style="cursor:help;opacity:.28">${icon}</span>`;
+  return `<span title="${label} address:\n${esc(txt).replace(/"/g,'&quot;')}" style="cursor:help">${icon}</span>`;
 }
 async function loadFirms(){
   const r=await API.rpc('adm_firms',{p_search:$('#f_q').value.trim()});
   const rows=r.rows||[];
-  $('#f_tbl').innerHTML=rows.length?`<table><tr><th>Firm</th><th>Type</th><th>TIN</th><th>Principal</th><th>Affiliation</th><th>Status</th></tr>`+
-    rows.map(f=>`<tr ${f.principal_id?`class="click" onclick="producerDetail('${f.principal_id}')"`:''}>
-    <td><b>${esc(f.firm_name)}</b></td><td>${esc(f.entity_type||'—')}</td><td>${esc(f.tin?'••'+String(f.tin).slice(-4):'—')}</td>
-    <td>${esc(f.principal_name||'—')}</td><td>${esc(f.affiliation_name||'—')}</td>
-    <td>${f.status==='not specified'?'<span class="chip c-bad">not specified</span>':'<span class="chip c-ok">active</span>'}</td></tr>`).join('')+'</table>':'<div class="muted">No matches.</div>';
+  $('#f_tbl').innerHTML=rows.length?`<table><tr><th title="Firm / DBA / LLC name from the SureLC or contracting record.">Firm</th><th title="Entity type — LLC, Corporation, Individual, LOA, etc.">Type</th><th title="Tax ID (masked — last 4 shown).">TIN</th><th title="Principal's National Producer Number.">NPN</th><th title="The individual principal behind the firm. Click a row to open their full profile.">Principal</th><th title="Agency/affiliation the firm's principal is assigned to.">Affiliation</th><th title="Hover the 🏢 business and ✉️ mailing icons for the full address.">Address</th><th title="Business phone / email on the firm record.">Contact</th><th title="active = has a linked principal record; not specified = abandoned or deleted.">Status</th></tr>`+
+    rows.map(f=>{
+      const biz=firmAddr(f.biz_addr1,f.biz_addr2,f.biz_city,f.biz_state,f.biz_zip);
+      const mail=firmAddr(f.mail_addr1,f.mail_addr2,f.mail_city,f.mail_state,f.mail_zip);
+      const contact=[f.business_phone,f.business_email].filter(x=>x).map(x=>esc(x)).join('<br>')||'<span class="muted">—</span>';
+      return `<tr ${f.principal_id?`class="click" onclick="producerDetail('${f.principal_id}')"`:''}>
+      <td><b>${esc(f.firm_name)}</b>${f.corp_lic_number?`<div class="muted">Corp lic ${esc(f.corp_lic_state||'')} ${esc(f.corp_lic_number)}</div>`:''}</td>
+      <td>${esc(f.entity_type||f.dba_type||'—')}</td>
+      <td>${esc(f.tin?'••'+String(f.tin).slice(-4):'—')}</td>
+      <td>${esc(f.npn||'—')}</td>
+      <td>${esc(f.principal_name||'—')}</td>
+      <td>${esc(f.affiliation_name||'—')}</td>
+      <td style="white-space:nowrap;font-size:16px">${addrIcon('🏢','Business',biz)} ${addrIcon('✉️','Mailing',mail)}</td>
+      <td>${contact}</td>
+      <td>${f.status==='not specified'?'<span class="chip c-bad">not specified</span>':'<span class="chip c-ok">active</span>'}</td></tr>`;
+    }).join('')+'</table>':'<div class="muted">No matches.</div>';
 }
 
 /* ================= CARRIERS ================= */
