@@ -110,7 +110,7 @@ const UI={
   toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2600);},
   openDrawer(html){$('#drawer').innerHTML=html;$('#drawer').classList.add('open');$('#ovl').classList.add('on');},
   closeDrawer(){$('#drawer').classList.remove('open');$('#ovl').classList.remove('on');},
-  chipStage(s){const m={draft:'c-dim',ready:'c-acc',submitted:'c-gold',completed:'c-ok',approved:'c-ok',declined:'c-bad'};return `<span class="chip ${m[s]||'c-dim'}">${esc(s||'—')}</span>`;},
+  chipStage(s){const k=(s||'').toLowerCase();const m={draft:'c-dim',ready:'c-acc',submitted:'c-gold',completed:'c-ok',approved:'c-ok',declined:'c-bad'};return `<span class="chip ${m[k]||'c-dim'}">${esc((s||'—')).toUpperCase()}</span>`;},
   chipDba(t){ if(!t) return '<span class="chip c-bad">not defined</span>';
     const m={business:'c-acc',individual:'c-ok',loa:'c-warn'};return `<span class="chip ${m[(t||'').toLowerCase()]||'c-dim'}">${esc(t)}</span>`;},
   csv(rows,name){ if(!rows||!rows.length){UI.toast('Nothing to export');return;}
@@ -121,7 +121,7 @@ const UI={
 };
 
 /* ---------------- Router ---------------- */
-const VIEWS={producers:Producers,requests:Requests,affiliations:Affiliations,firms:Firms,carriers:Carriers,reports:Reports,prefills:Prefills,alerts:Alerts,agency:Agency,admins:Admins};
+const VIEWS={producers:Producers,requests:Requests,affiliations:Affiliations,hierarchy:Hierarchy,firms:Firms,carriers:Carriers,reports:Reports,prefills:Prefills,alerts:Alerts,agency:Agency,admins:Admins};
 async function route(){
   const v=(location.hash||'#producers').slice(1).split('/')[0];
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
@@ -134,7 +134,7 @@ window.addEventListener('hashchange',route);
 /* ---------------- Shell ---------------- */
 function shell(){
   const m=API.me;
-  const tabs=[['producers','Producers'],['requests','Requests'],['affiliations','Affiliations'],['firms','Firms'],['carriers','Carriers'],['reports','Reports'],['prefills','Pre-fills'],['alerts','Alerts'],['agency','Agency']];
+  const tabs=[['producers','Producers'],['requests','Requests'],['affiliations','Affiliations'],['hierarchy','Hierarchy'],['firms','Firms'],['carriers','Carriers'],['reports','Reports'],['prefills','Pre-fills'],['alerts','Alerts'],['agency','Agency']];
   if(API.isFull()) tabs.push(['admins','Admins']);
   $('#app').innerHTML=`
   <div class="top"><div class="logo">EQUITA <span>CONTRACTING</span> · Admin</div>
@@ -200,11 +200,11 @@ async function loadProducers(){
   $('#p_total').textContent=`${r.total} producers`;
   const rows=r.rows||[]; window._prod=rows;
   const cw=API.canWrite();
-  $('#p_tbl').innerHTML=rows.length?`<table><tr>${cw?'<th></th>':''}<th title="Producer's full name from the contracting/SureLC record. Click a row to open the full profile.">Name</th><th title="Primary email on the producer's contracting profile / portal login.">Email</th><th title="National Producer Number — the producer's NIPR license ID.">NPN</th><th title="Best contact phone number on the producer's profile.">Phone</th><th title="The agency/affiliation this producer is assigned to; drives scoping and the contracting workflow.">Affiliation</th><th title="Business type: LOA, individual, or business entity — determines agent vs agency paperwork.">DBA</th><th title="Current contracting stage for this producer (e.g. in_contracting, submitted, completed).">Status</th></tr>`+
+  $('#p_tbl').innerHTML=rows.length?`<table><tr>${cw?'<th></th>':''}<th title="Producer's full name from the contracting/SureLC record. Click a row to open the full profile.">Name</th><th title="Primary email on the producer's contracting profile / portal login.">Email</th><th title="National Producer Number — the producer's NIPR license ID.">NPN</th><th title="Best contact phone number on the producer's profile.">Phone</th><th title="The agency/affiliation this producer is assigned to; drives scoping and the contracting workflow.">Affiliation</th><th title="Direct upline for this producer — seeded from the AMS agent-to-owner mapping, or the upline selected on the intake form when it differs from the affiliation.">Direct Upline</th><th title="Business type: LOA, individual, or business entity — determines agent vs agency paperwork.">DBA</th><th title="Current contracting stage for this producer (e.g. in_contracting, submitted, completed).">Status</th></tr>`+
     rows.map(p=>`<tr class="click" onclick="producerDetail('${p.id}')">
       ${cw?`<td onclick="event.stopPropagation()"><input type="checkbox" class="psel" value="${p.id}" onchange="selCount()"></td>`:''}
       <td><b>${esc(p.first_name)} ${esc(p.last_name)}</b></td><td>${esc(p.email)}</td><td>${esc(p.npn||'—')}</td>
-      <td>${esc(p.phone||'—')}</td><td>${esc(p.affiliation_name||'—')}</td><td>${UI.chipDba(p.dba_type)}</td>
+      <td>${esc(p.phone||'—')}</td><td>${esc(p.affiliation_name||'—')}</td><td>${esc(p.direct_upline||'—')}</td><td>${UI.chipDba(p.dba_type)}</td>
       <td>${UI.chipStage(p.contract_status||p.stage)}</td></tr>`).join('')+'</table>':'<div class="muted">No matches.</div>';
   selCount();
 }
@@ -511,6 +511,52 @@ function affEdit(a){
 async function affSave(id){
   const r=await API.rpc('adm_affiliation_save',{p_id:id,p_name:$('#af_n').value.trim(),p_business_name:$('#af_b').value.trim()||null,p_email:$('#af_e').value.trim()||null});
   UI.toast(r.ok?'Saved':r.error); if(r.ok){UI.closeDrawer();AFF_CACHE=null;Affiliations();}
+}
+
+/* ================= HIERARCHY (item 1) ================= */
+async function Hierarchy(){
+  const r=await API.rpc('adm_hierarchy',{});
+  if(!r.ok){ $('#view').innerHTML=`<div class="card">${esc(r.error)}</div>`; return; }
+  const rows=r.rows||[];
+  $('#view').innerHTML=`
+  <div class="card"><h2>Contracting hierarchy</h2>
+    <div class="muted">Affiliation → direct upline → producer, tagged with contracting stage. Direct upline is AMS-sourced (agent→owner) or the intake-form upline when one is selected. Click a row to expand; click a producer to open their profile.</div></div>
+  <div class="card"><div id="hier">${rows.length?rows.map(hierAff).join(''):'<div class="muted">No producers in scope.</div>'}</div></div>`;
+}
+function hierAff(a){
+  return `<div class="hnode" data-aff="${a.id}">
+    <div class="hrow" style="cursor:pointer;padding:6px 0;border-bottom:1px solid var(--line)" onclick="hierTogAff(this,${a.id})">
+      <span class="htw" style="display:inline-block;width:14px">&#9654;</span> <b>${esc(a.name)}</b>
+      <span class="chip c-acc" style="margin-left:6px">${a.producers}</span>${a.completed?` <span class="chip c-ok">${a.completed} done</span>`:''}</div>
+    <div class="hkids" style="display:none;margin-left:20px"></div></div>`;
+}
+async function hierTogAff(el,affId){
+  const kids=el.parentElement.querySelector('.hkids'), tw=el.querySelector('.htw');
+  if(kids.style.display!=='none'){ kids.style.display='none'; tw.innerHTML='&#9654;'; return; }
+  tw.innerHTML='&#9660;'; kids.style.display='block';
+  if(kids.dataset.loaded) return;
+  kids.innerHTML='<div class="muted">Loading…</div>';
+  const r=await API.rpc('adm_hierarchy',{p_affiliation_id:affId});
+  const rows=(r&&r.rows)||[];
+  kids.innerHTML=rows.length?rows.map(u=>`<div class="hnode" data-up="${encodeURIComponent(u.upline)}">
+    <div class="hrow" style="cursor:pointer;padding:5px 0" onclick="hierTogUp(this,${affId})">
+      <span class="htw" style="display:inline-block;width:14px">&#9654;</span> ${esc(u.upline)} <span class="chip c-dim" style="margin-left:6px">${u.producers}</span></div>
+    <div class="hkids" style="display:none;margin-left:20px"></div></div>`).join(''):'<div class="muted">None.</div>';
+  kids.dataset.loaded='1';
+}
+async function hierTogUp(el,affId){
+  const node=el.parentElement, kids=node.querySelector('.hkids'), tw=el.querySelector('.htw');
+  if(kids.style.display!=='none'){ kids.style.display='none'; tw.innerHTML='&#9654;'; return; }
+  tw.innerHTML='&#9660;'; kids.style.display='block';
+  if(kids.dataset.loaded) return;
+  const upline=decodeURIComponent(node.dataset.up||'');
+  kids.innerHTML='<div class="muted">Loading…</div>';
+  const r=await API.rpc('adm_hierarchy',{p_affiliation_id:affId,p_upline:upline});
+  const rows=(r&&r.rows)||[];
+  kids.innerHTML=rows.length?`<table><tr><th>Producer</th><th>NPN</th><th>Stage</th></tr>`+
+    rows.map(p=>`<tr class="click" onclick="location.hash='#producers';setTimeout(()=>producerDetail('${p.id}'),60)">
+      <td>${esc(p.first_name)} ${esc(p.last_name)}</td><td>${esc(p.npn||'—')}</td><td>${UI.chipStage(p.stage)}</td></tr>`).join('')+'</table>':'<div class="muted">None.</div>';
+  kids.dataset.loaded='1';
 }
 
 /* ================= FIRMS ================= */
