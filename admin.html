@@ -38,7 +38,7 @@ h2{font-size:17px;margin-bottom:10px}h3{font-size:14px;margin:12px 0 6px;color:v
 .gate{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px}
 .gate .dot{width:10px;height:10px;border-radius:50%}
 .dot.g{background:var(--ok)}.dot.r{background:var(--bad)}.dot.y{background:var(--warn)}
-.drawer{position:fixed;top:0;right:-720px;width:700px;max-width:96vw;height:100vh;background:var(--panel);border-left:1px solid var(--line);z-index:100;transition:right .22s;overflow-y:auto;padding:18px}
+.drawer{position:fixed;top:0;right:-100vw;width:100vw;max-width:100vw;height:100vh;background:var(--panel);border-left:1px solid var(--line);z-index:100;transition:right .22s;overflow-y:auto;padding:18px}
 .drawer.open{right:0}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:90;display:none}.overlay.on{display:block}
 .login{max-width:400px;margin:9vh auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:26px}
@@ -200,11 +200,11 @@ async function loadProducers(){
   $('#p_total').textContent=`${r.total} producers`;
   const rows=r.rows||[]; window._prod=rows;
   const cw=API.canWrite();
-  $('#p_tbl').innerHTML=rows.length?`<table><tr>${cw?'<th></th>':''}<th>Name</th><th>Email</th><th>NPN</th><th>State</th><th>Affiliation</th><th>DBA</th><th>Status</th></tr>`+
+  $('#p_tbl').innerHTML=rows.length?`<table><tr>${cw?'<th></th>':''}<th title="Producer's full name from the contracting/SureLC record. Click a row to open the full profile.">Name</th><th title="Primary email on the producer's contracting profile / portal login.">Email</th><th title="National Producer Number — the producer's NIPR license ID.">NPN</th><th title="Best contact phone number on the producer's profile.">Phone</th><th title="The agency/affiliation this producer is assigned to; drives scoping and the contracting workflow.">Affiliation</th><th title="Business type: LOA, individual, or business entity — determines agent vs agency paperwork.">DBA</th><th title="Current contracting stage for this producer (e.g. in_contracting, submitted, completed).">Status</th></tr>`+
     rows.map(p=>`<tr class="click" onclick="producerDetail('${p.id}')">
       ${cw?`<td onclick="event.stopPropagation()"><input type="checkbox" class="psel" value="${p.id}" onchange="selCount()"></td>`:''}
       <td><b>${esc(p.first_name)} ${esc(p.last_name)}</b></td><td>${esc(p.email)}</td><td>${esc(p.npn||'—')}</td>
-      <td>${esc(p.state||'—')}</td><td>${esc(p.affiliation_name||'—')}</td><td>${UI.chipDba(p.dba_type)}</td>
+      <td>${esc(p.phone||'—')}</td><td>${esc(p.affiliation_name||'—')}</td><td>${UI.chipDba(p.dba_type)}</td>
       <td>${UI.chipStage(p.contract_status||p.stage)}</td></tr>`).join('')+'</table>':'<div class="muted">No matches.</div>';
   selCount();
 }
