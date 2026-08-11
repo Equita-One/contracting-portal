@@ -55,6 +55,8 @@ details.sec .inner{padding:4px 12px 10px}
 .nmodal{position:fixed;top:0;right:-560px;width:540px;max-width:96vw;height:100vh;background:var(--panel2);border-left:1px solid var(--line);z-index:130;transition:right .2s;overflow-y:auto;padding:18px}
 .nmodal.open{right:0}
 .novl{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:120;display:none}.novl.on{display:block}
+.covl{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:140;display:none;align-items:center;justify-content:center;padding:20px}.covl.on{display:flex}
+.cmodal{background:var(--panel2);border:1px solid var(--line);border-radius:10px;max-width:680px;width:94vw;max-height:84vh;overflow:auto;padding:20px;box-shadow:0 14px 50px rgba(0,0,0,.55)}
 .noteline{border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin:8px 0;background:var(--panel)}
 .noteline .meta{font-size:11.5px;color:var(--dim);margin-bottom:4px}
 @media(max-width:900px){.nmodal{width:100vw}}
@@ -73,6 +75,7 @@ details.sec .inner{padding:4px 12px 10px}
 <div class="drawer" id="drawer"></div>
 <div class="novl" id="nm_ovl" onclick="closeNotes()"></div>
 <div class="nmodal" id="nm"></div>
+<div class="covl" id="cmodal_ovl" onclick="if(event.target===this)closeCmodal()"><div class="cmodal" id="cmodal"></div></div>
 <div class="toast" id="toast"></div>
 <script>
 /* ============================================================
@@ -487,6 +490,25 @@ async function genPacket(id,fn){
 }
 async function markSubmitted(id){ const r=await API.rpc('adm_request_mark_submitted',{p_id:id}); UI.toast(r.ok?'Marked submitted':r.error); if(r.ok){UI.closeDrawer();loadRequests();} }
 
+/* ---------------- centered modal (items 7,8) ---------------- */
+function openCmodal(html){ $('#cmodal').innerHTML=html; $('#cmodal_ovl').classList.add('on'); }
+function closeCmodal(){ $('#cmodal_ovl').classList.remove('on'); }
+
+/* ---------------- item 7: affiliation carriers + writing numbers ---------------- */
+async function affCarriers(affId){
+  const _a=(AFF_CACHE||[]).find(x=>String(x.id)===String(affId))||{}; const name=_a.name||'Affiliation';
+  openCmodal(`<div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">Carriers — ${esc(name)}</h2>
+    <button class="sec" onclick="closeCmodal()">Close</button></div>
+    <div id="afc_body" class="muted" style="margin-top:12px">Loading…</div>`);
+  let r; try{ r=await API.rpc('adm_affiliation_carriers',{p_affiliation_id:affId}); }
+  catch(e){ const b=$('#afc_body'); if(b) b.textContent=e.message; return; }
+  const rows=(r&&r.rows)||[]; const b=$('#afc_body'); if(!b) return;
+  b.outerHTML=rows.length?`<div style="margin-top:12px"><div class="muted" style="margin-bottom:6px">${rows.length} carrier(s) appointed for this affiliation.</div>
+    <table style="width:100%"><tr><th>Carrier</th><th>Writing number(s)</th></tr>`+
+    rows.map(x=>`<tr><td><b>${esc(x.carrier)}</b></td><td>${x.writing_numbers?esc(x.writing_numbers):'<span class="muted">—</span>'}</td></tr>`).join('')+`</table></div>`
+    :'<div class="muted" style="margin-top:12px">No carriers on file for this affiliation.</div>';
+}
+
 /* ================= AFFILIATIONS ================= */
 async function Affiliations(){
   const r=await API.rpc('adm_affiliations'); AFF_CACHE=r.rows||[];
@@ -497,7 +519,7 @@ async function Affiliations(){
   <div class="card"><table><tr><th>Name</th><th>Business</th><th>Email</th><th>Agents</th><th>Carriers</th><th></th></tr>
   ${AFF_CACHE.map(a=>`<tr><td><b>${esc(a.name)}</b></td><td>${esc(a.business_name||'—')}</td><td>${esc(a.contracting_email||'—')}</td>
     <td><a href="#producers" onclick="setTimeout(()=>{document.querySelector('#p_aff').value='${a.id}';loadProducers();},300)">${a.agent_count}</a></td>
-    <td>${a.carrier_count}</td>
+    <td>${a.carrier_count?`<a href="#" title="View carriers + writing numbers for this affiliation" onclick="affCarriers(${a.id});return false">${a.carrier_count}</a>`:'0'}</td>
     <td>${API.canWrite()?`<button class="sec" style="padding:4px 10px" onclick='affEdit(${JSON.stringify(a).replace(/'/g,"&#39;")})'>Edit</button>`:''}</td></tr>`).join('')}</table></div>`;
 }
 function affEdit(a){
