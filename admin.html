@@ -522,17 +522,151 @@ async function Affiliations(){
     <td>${a.carrier_count?`<a href="#" title="View carriers + writing numbers for this affiliation" onclick="affCarriers(${a.id});return false">${a.carrier_count}</a>`:'0'}</td>
     <td>${API.canWrite()?`<button class="sec" style="padding:4px 10px" onclick='affEdit(${JSON.stringify(a).replace(/'/g,"&#39;")})'>Edit</button>`:''}</td></tr>`).join('')}</table></div>`;
 }
-function affEdit(a){
+/* ---------------- item 8: SureLC-style affiliation editor (5 tabs, centered modal) ---------------- */
+let AFFED=null;
+async function affEdit(a){
   a=a||{};
-  UI.openDrawer(`<h2>${a.id?'Edit':'New'} affiliation</h2>
-  <div class="kv" style="margin:10px 0"><b>Name</b><input id="af_n" value="${esc(a.name||'')}"></div>
-  <div class="kv" style="margin:10px 0"><b>Business name</b><input id="af_b" value="${esc(a.business_name||'')}"></div>
-  <div class="kv" style="margin:10px 0"><b>Contracting email</b><input id="af_e" value="${esc(a.contracting_email||'')}"></div>
-  <div class="row"><button onclick="affSave(${a.id||null})">Save</button><button class="sec" onclick="UI.closeDrawer()">Cancel</button></div>`);
+  if(!a.id){
+    openCmodal(`<div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">New affiliation</h2><button class="sec" onclick="closeCmodal()">Close</button></div>
+      <div class="kv" style="margin:12px 0"><b>Name</b><input id="af_n"></div>
+      <div class="kv" style="margin:10px 0"><b>Business name</b><input id="af_b"></div>
+      <div class="kv" style="margin:10px 0"><b>Contracting email</b><input id="af_e"></div>
+      <div class="row" style="margin-top:12px"><button onclick="affCreate()">Create</button><button class="sec" onclick="closeCmodal()">Cancel</button></div>`);
+    return;
+  }
+  openCmodal('<div class="muted">Loading…</div>');
+  const r=await API.rpc('adm_affiliation_full',{p_id:a.id});
+  if(!r.ok){ openCmodal(`<div>${esc(r.error)}</div><div class="row" style="margin-top:10px"><button class="sec" onclick="closeCmodal()">Close</button></div>`); return; }
+  AFFED={id:a.id, aff:r.affiliation||{}, carriers:r.carriers||[], settings:(r.affiliation&&r.affiliation.settings)||{}, tab:'settings'};
+  affEdRender('settings');
 }
-async function affSave(id){
-  const r=await API.rpc('adm_affiliation_save',{p_id:id,p_name:$('#af_n').value.trim(),p_business_name:$('#af_b').value.trim()||null,p_email:$('#af_e').value.trim()||null});
-  UI.toast(r.ok?'Saved':r.error); if(r.ok){UI.closeDrawer();AFF_CACHE=null;Affiliations();}
+async function affCreate(){
+  const r=await API.rpc('adm_affiliation_save',{p_id:null,p_name:$('#af_n').value.trim(),p_business_name:$('#af_b').value.trim()||null,p_email:$('#af_e').value.trim()||null});
+  UI.toast(r.ok?'Created':r.error); if(r.ok){ closeCmodal(); AFF_CACHE=null; Affiliations(); }
+}
+function affEdGrab(){ // capture the currently-shown tab's fields into AFFED
+  const A=AFFED; if(!A) return; const S=A.settings=A.settings||{}; const g=id=>{const e=$('#'+id);return e?e.value:undefined;}; const ck=id=>{const e=$('#'+id);return e?e.checked:undefined;};
+  if($('#af_contact')!==null && $('#af_contact')!==undefined){ // settings tab present
+    A.aff.name=g('af_name'); A.aff.business_name=g('af_business'); A.aff.contracting_email=g('af_cemail');
+    S.contact=g('af_contact'); S.phone=g('af_phone'); S.email=g('af_email2'); S.ein_tin=g('af_ein');
+    S.email_notifications=(g('af_notif')||'').split(/[\n,]+/).map(x=>x.trim()).filter(Boolean);
+    S.business_address={line1:g('af_a_line'),city:g('af_a_city'),state:g('af_a_state'),zip:g('af_a_zip')};
+    S.validation={mode:(document.querySelector('input[name=af_val]:checked')||{}).value||'default',eft_data:ck('af_v_eft'),voided_check:ck('af_v_check'),eo_data:ck('af_v_eo'),eo_cert:ck('af_v_cert')};
+  }
+  if($('#af_cl_editable')){ // custom link tab
+    S.custom_link={editable:ck('af_cl_editable'),required:ck('af_cl_required'),visible:ck('af_cl_visible'),producer_phone:g('af_cl_phone'),producer_fax:g('af_cl_fax'),dba_type:g('af_cl_dba'),reg_cc:(g('af_cl_cc')||'').split(/[\n,]+/).map(x=>x.trim()).filter(Boolean),reg_bcc:(g('af_cl_bcc')||'').split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)};
+  }
+  if($('#af_dba_enabled')){ // dba template tab
+    S.dba_template={enabled:ck('af_dba_enabled'),dba_type:g('af_dba_type'),email:g('af_dba_email'),email_mode:g('af_dba_email_m'),phone:g('af_dba_phone'),phone_mode:g('af_dba_phone_m'),fax:g('af_dba_fax'),fax_mode:g('af_dba_fax_m')};
+  }
+}
+function affEdRender(tab){
+  affEdGrab(); const A=AFFED; A.tab=tab; const s=A.settings||{}, aff=A.aff||{};
+  const T=[['settings','Settings'],['carriers','Carriers'],['customlink','Custom Link'],['dba','DBA Template'],['reassign','Reassign']];
+  const bar=T.map(([t,l])=>`<span onclick="affEdRender('${t}')" style="cursor:pointer;padding:8px 14px;border-bottom:2px solid ${t===tab?'var(--gold)':'transparent'};${t===tab?'font-weight:700;color:var(--txt)':'color:var(--dim)'}">${l}</span>`).join('');
+  let body='';
+  if(tab==='settings') body=affEdSettings(s,aff);
+  else if(tab==='carriers') body=affEdCarriers();
+  else if(tab==='customlink') body=affEdLink(s,aff);
+  else if(tab==='dba') body=affEdDba(s);
+  else body=affEdReassign();
+  openCmodal(`<div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">${esc(aff.name||'Affiliation')}</h2><button class="sec" onclick="closeCmodal()">Close</button></div>
+    <div class="row" style="border-bottom:1px solid var(--line);margin:6px 0 14px;gap:2px;flex-wrap:wrap">${bar}</div>
+    <div id="afed_body">${body}</div>`);
+  if(tab==='reassign') affEdLoadReassign();
+}
+function affEdSettings(s,aff){ const ba=s.business_address||{}, va=s.validation||{}; const m=va.mode||'default';
+  return `<h3>Custom Information</h3>
+  <div class="grid2"><div class="kv"><b>Business Name</b><input id="af_business" value="${esc(aff.business_name||'')}"></div>
+    <div class="kv"><b>Name</b><input id="af_name" value="${esc(aff.name||'')}"></div>
+    <div class="kv"><b>Contact</b><input id="af_contact" value="${esc(s.contact||'')}"></div>
+    <div class="kv"><b>Phone</b><input id="af_phone" value="${esc(s.phone||'')}"></div>
+    <div class="kv"><b>Email</b><input id="af_email2" value="${esc(s.email||'')}"></div>
+    <div class="kv"><b>Contracting email</b><input id="af_cemail" value="${esc(aff.contracting_email||'')}"></div>
+    <div class="kv"><b>EIN/TIN</b><input id="af_ein" value="${esc(s.ein_tin||'')}"></div></div>
+  <h3 style="margin-top:14px">Email Notifications</h3><div class="muted" style="margin-bottom:4px">One email per line — notified when a producer under this affiliation registers.</div>
+  <textarea id="af_notif" rows="2" style="width:100%">${esc((s.email_notifications||[]).join('\n'))}</textarea>
+  <h3 style="margin-top:14px">Business Address</h3>
+  <div class="grid2"><div class="kv"><b>Street</b><input id="af_a_line" value="${esc(ba.line1||'')}"></div>
+    <div class="kv"><b>City</b><input id="af_a_city" value="${esc(ba.city||'')}"></div>
+    <div class="kv"><b>State</b><input id="af_a_state" value="${esc(ba.state||'')}"></div>
+    <div class="kv"><b>ZIP</b><input id="af_a_zip" value="${esc(ba.zip||'')}"></div></div>
+  <h3 style="margin-top:14px">Affiliation Validation Rules</h3>
+  <div class="row" style="gap:16px"><label><input type="radio" name="af_val" value="default" ${m!=='custom'?'checked':''}> Default</label>
+    <label><input type="radio" name="af_val" value="custom" ${m==='custom'?'checked':''}> Custom</label></div>
+  <div class="row" style="gap:16px;margin-top:6px"><b>EFT</b><label><input type="checkbox" id="af_v_eft" ${va.eft_data?'checked':''}> EFT Data</label>
+    <label><input type="checkbox" id="af_v_check" ${va.voided_check?'checked':''}> Voided Check</label></div>
+  <div class="row" style="gap:16px;margin-top:4px"><b>E&amp;O</b><label><input type="checkbox" id="af_v_eo" ${va.eo_data?'checked':''}> E&amp;O Data</label>
+    <label><input type="checkbox" id="af_v_cert" ${va.eo_cert?'checked':''}> E&amp;O Certificate</label></div>
+  <div class="row" style="margin-top:16px"><button onclick="affEdSaveSettings()">Save</button><button class="sec" onclick="closeCmodal()">Cancel</button></div>`;
+}
+function affEdCarriers(){ const cars=(AFFED.carriers||[]);
+  return `<div class="row" style="justify-content:space-between;gap:8px"><input id="af_car_q" placeholder="Search carriers…" style="flex:1" oninput="affEdCarFilter()">
+    <button class="sec" onclick="affEdCarAll(true)">Select all</button><button class="sec" onclick="affEdCarAll(false)">Deselect all</button></div>
+  <div class="muted" style="margin:6px 0">Check the carriers this affiliation is appointed with, and enter the affiliation's writing number for each.</div>
+  <div id="af_car_list" style="max-height:52vh;overflow:auto">${cars.map(affEdCarRow).join('')}</div>
+  <div class="row" style="margin-top:12px"><button onclick="affEdSaveCarriers()">Save carriers</button><button class="sec" onclick="closeCmodal()">Cancel</button></div>`;
+}
+function affEdCarRow(c){ return `<div class="af_car" data-name="${esc((c.name||'').toLowerCase())}" style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--line)">
+  <label style="flex:1"><input type="checkbox" class="af_car_ck" value="${c.surelc_carrier_id}" ${c.selected?'checked':''}> ${esc(c.name)}</label>
+  <input class="af_car_wn" data-cid="${c.surelc_carrier_id}" placeholder="writing #" value="${esc(c.writing_number||'')}" style="width:150px"></div>`;
+}
+function affEdCarFilter(){ const q=($('#af_car_q').value||'').toLowerCase(); document.querySelectorAll('#af_car_list .af_car').forEach(d=>{ d.style.display=d.dataset.name.includes(q)?'flex':'none'; }); }
+function affEdCarAll(v){ document.querySelectorAll('#af_car_list .af_car_ck').forEach(c=>{ if(document.querySelector(`.af_car[data-name]`) && c.closest('.af_car').style.display!=='none') c.checked=v; }); }
+async function affEdSaveCarriers(){
+  const items=[...document.querySelectorAll('#af_car_list .af_car_ck:checked')].map(c=>{ const wn=document.querySelector(`.af_car_wn[data-cid="${c.value}"]`); return {surelc_carrier_id:Number(c.value),writing_number:wn?wn.value.trim():''}; });
+  const r=await API.rpc('adm_affiliation_carriers_set',{p_id:AFFED.id,p_items:items});
+  if(!r.ok) return UI.toast(r.error);
+  UI.toast(`Saved ${r.count} carrier(s)`); AFF_CACHE=null;
+  const fr=await API.rpc('adm_affiliation_full',{p_id:AFFED.id}); if(fr.ok){ AFFED.carriers=fr.carriers||[]; } Affiliations();
+}
+function affEdLink(s,aff){ const cl=s.custom_link||{};
+  return `<div class="row" style="gap:18px"><label><input type="checkbox" id="af_cl_editable" ${cl.editable?'checked':''}> Editable</label>
+    <label><input type="checkbox" id="af_cl_required" ${cl.required!==false?'checked':''}> Required</label>
+    <label><input type="checkbox" id="af_cl_visible" ${cl.visible!==false?'checked':''}> Visible</label></div>
+  <div class="grid2" style="margin-top:10px"><div class="kv"><b>Producer Phone</b><input id="af_cl_phone" value="${esc(cl.producer_phone||'')}"></div>
+    <div class="kv"><b>Producer Fax</b><input id="af_cl_fax" value="${esc(cl.producer_fax||'')}"></div>
+    <div class="kv"><b>DBA Type</b><input id="af_cl_dba" value="${esc(cl.dba_type||'None')}"></div></div>
+  <h3 style="margin-top:12px">New Registration CC</h3><textarea id="af_cl_cc" rows="2" style="width:100%" placeholder="one email per line">${esc((cl.reg_cc||[]).join('\n'))}</textarea>
+  <h3 style="margin-top:8px">New Registration BCC</h3><textarea id="af_cl_bcc" rows="2" style="width:100%" placeholder="one email per line">${esc((cl.reg_bcc||[]).join('\n'))}</textarea>
+  <h3 style="margin-top:12px">Custom Link</h3>
+  <textarea readonly rows="3" style="width:100%">${esc(aff.custom_link||'(no custom link on file)')}</textarea>
+  <div class="row" style="margin-top:10px"><button onclick="affEdSaveSettings()">Save</button>
+    <button class="sec" onclick="affEdCopyLink()">Copy custom link</button>
+    <button class="sec" onclick="closeCmodal()">Cancel</button></div>`;
+}
+function affEdDba(s){ const d=s.dba_template||{}; const mode=(id,v)=>`<select id="${id}"><option value="never" ${v!=='always'?'selected':''}>Never Use</option><option value="always" ${v==='always'?'selected':''}>Use Always</option></select>`;
+  return `<label><input type="checkbox" id="af_dba_enabled" ${d.enabled?'checked':''}> Enabled</label>
+  <div class="kv" style="margin-top:10px"><b>DBA Type</b><input id="af_dba_type" value="${esc(d.dba_type||'')}"></div>
+  <h3 style="margin-top:12px">Best Way To Contact</h3>
+  <div class="grid2"><div class="kv"><b>Email</b><input id="af_dba_email" value="${esc(d.email||'')}"></div><div>${mode('af_dba_email_m',d.email_mode)}</div>
+    <div class="kv"><b>Phone</b><input id="af_dba_phone" value="${esc(d.phone||'')}"></div><div>${mode('af_dba_phone_m',d.phone_mode)}</div>
+    <div class="kv"><b>Fax</b><input id="af_dba_fax" value="${esc(d.fax||'')}"></div><div>${mode('af_dba_fax_m',d.fax_mode)}</div></div>
+  <div class="row" style="margin-top:14px"><button onclick="affEdSaveSettings()">Save</button><button class="sec" onclick="closeCmodal()">Cancel</button></div>`;
+}
+function affEdReassign(){
+  return `<div class="muted" style="margin-bottom:8px">Move producers from this affiliation to another.</div>
+  <div class="grid2"><div><b>Producers</b><div id="af_re_prod" style="max-height:44vh;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:4px"><div class="muted">Loading…</div></div></div>
+    <div><b>Move to affiliation</b><select id="af_re_dest" style="width:100%;margin-top:4px"></select>
+      <div class="row" style="margin-top:10px"><button class="warn" onclick="affEdDoReassign()">Move selected</button></div></div></div>`;
+}
+async function affEdLoadReassign(){
+  const r=await API.rpc('adm_producers',{p_affiliation_id:AFFED.id,p_limit:500,p_offset:0});
+  const rows=(r&&r.rows)||[]; const box=$('#af_re_prod'); if(box) box.innerHTML=rows.length?rows.map(p=>`<label style="display:block;padding:3px 0"><input type="checkbox" class="af_re_ck" value="${p.id}"> ${esc(p.first_name)} ${esc(p.last_name)}</label>`).join(''):'<div class="muted">No producers.</div>';
+  const dest=$('#af_re_dest'); if(dest) dest.innerHTML=(AFF_CACHE||[]).filter(a=>String(a.id)!==String(AFFED.id)).map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('');
+}
+async function affEdDoReassign(){
+  const ids=[...document.querySelectorAll('.af_re_ck:checked')].map(c=>c.value);
+  const dest=$('#af_re_dest').value?Number($('#af_re_dest').value):null;
+  if(!ids.length) return UI.toast('Select producers'); if(!dest) return UI.toast('Pick a destination');
+  const r=await API.rpc('adm_reassign_producers',{p_ids:ids,p_affiliation_id:dest});
+  UI.toast(r.ok?`Reassigned ${r.reassigned}`:r.error); if(r.ok){ AFF_CACHE=null; affEdLoadReassign(); }
+}
+async function affEdCopyLink(){ try{ await navigator.clipboard.writeText((AFFED&&AFFED.aff&&AFFED.aff.custom_link)||''); UI.toast('Copied'); }catch(e){ UI.toast('Copy failed'); } }
+async function affEdSaveSettings(){
+  affEdGrab(); const A=AFFED;
+  const r=await API.rpc('adm_affiliation_settings_save',{p_id:A.id,p_name:A.aff.name,p_business_name:A.aff.business_name||null,p_email:A.aff.contracting_email||null,p_settings:A.settings});
+  UI.toast(r.ok?'Saved':r.error); if(r.ok){ AFF_CACHE=null; Affiliations(); }
 }
 
 /* ================= HIERARCHY (item 1) ================= */
