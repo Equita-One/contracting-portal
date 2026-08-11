@@ -236,7 +236,8 @@ async function loadAll(){
   TRAIN=(await sb.from("producer_training").select("*").eq("producer_id",PID).order("completed_date",{ascending:false})).data||[];
   SIG=(await sb.from("producer_signature").select("*").eq("producer_id",PID).maybeSingle()).data||{};
   SIGURL=null; if(SIG.signature_path){ try{ const su=await sb.storage.from("producer-docs").createSignedUrl(SIG.signature_path,3600); SIGURL=(su.data&&su.data.signedUrl)||null; }catch(e){} }
-  try{ CARRIERS=(await sb.from("carrier_requirements").select("carrier_key,carrier_name,aml_required,background_required,eo_min_each,submission_method").order("carrier_name")).data||[]; }catch(e){CARRIERS=[];}
+  /* carriers scoped to the producer's affiliation (Admin Contracting > affiliation > Carriers drives this) */
+  try{ CARRIERS=((await sb.rpc("ci_intake_carriers")).data||[]).filter(c=>c.supported).map(c=>({carrier_key:c.carrier_key,carrier_name:c.name,aml_required:c.aml_required,background_required:c.background_required,submission_method:c.submission_method})); }catch(e){CARRIERS=[];}
   try{ REQUESTS=(await sb.rpc("my_requests")).data||[]; }catch(e){REQUESTS=[];}
   await loadFlags();
 }
