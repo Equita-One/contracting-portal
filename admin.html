@@ -284,12 +284,13 @@ async function producerDetail(id){
   try{ window._DOCS=((await API.rpc('adm_producer_docs',{p_id:id}))||{}).documents||[]; }catch(e){ window._DOCS=[]; }
   const p=d.producer, pr=d.profile||{}, sig=d.signature||{}, eft=d.eft, fin=d.finra;
   window._curP={id:p.id,name:((p.first_name||'')+' '+(p.last_name||'')).trim()};
+  window._notesCarriers=(d.carrier_contracts||[]).map(x=>({key:x.carrier_key||null,name:x.carrier_name}));
   const sect=(title,badge,inner)=>`<details class="sec"><summary>${title} ${badge||''}</summary><div class="inner">${inner}</div></details>`;
   const cnt=a=>`<span class="chip ${a&&a.length?'c-acc':'c-dim'}">${a?a.length:0}</span>`;
   UI.openDrawer(`
   <div class="row" style="justify-content:space-between"><h2>${esc(p.first_name)} ${esc(p.last_name)}</h2>
     <div class="row" style="gap:6px">
-      <button class="sec" onclick="openNotes()">Notes</button>
+      <button class="sec" onclick="var e=document.getElementById('p_notes_inline');if(e)e.scrollIntoView({behavior:'smooth',block:'start'});">Notes ↓</button>
       <button class="sec" onclick="UI.closeDrawer()">Close</button></div></div>
   <div class="pill-row">${UI.chipDba(pr.dba_type)} ${UI.chipStage(p.contract_status||p.stage)}
     ${d.affiliation?`<span class="chip c-acc">${esc(d.affiliation.name)}</span>`:''}
@@ -328,17 +329,59 @@ async function producerDetail(id){
     ${esc(x.provider||'')} · ${x.expiration_date?'exp '+fmtD(x.expiration_date):'completed '+fmtD(x.completed_date)}</div>`).join(''):'<div class="muted">None.</div>')}
   ${sect('Signature',sig.has_image?'<span class="chip c-ok">on file</span>':'<span class="chip c-bad">missing</span>',
     sig.has_image?`<div class="kv"><b>Signed</b>${fmtD(sig.signed_at)}</div><div class="kv"><b>Authorization</b>v${esc(sig.auth_version||'1')}</div>`:'<div class="muted">Not signed.</div>')}
-  ${sect('Carrier contracts',cnt(d.carrier_contracts),(d.carrier_contracts||[]).length?`<table><tr><th>Carrier</th><th>Writing #</th><th>Start</th><th>Status</th><th>Products</th></tr>`+
-    d.carrier_contracts.map(x=>`<tr><td><b>${esc(x.carrier_name)}</b></td><td>${esc(x.writing_number||'—')}</td><td>${fmtD(x.start_date)}</td>
+  ${sect('Carrier contracts',cnt(d.carrier_contracts),(d.carrier_contracts||[]).length?`<table><tr><th>Carrier</th><th>Writing #</th><th>Start</th><th>Status</th><th>Products</th><th></th></tr>`+
+    d.carrier_contracts.map((x,i)=>`<tr><td><b>${esc(x.carrier_name)}</b></td><td>${esc(x.writing_number||'—')}</td><td>${fmtD(x.start_date)}</td>
     <td>${x.status==='active'?'<span class="chip c-ok">active</span>':`<span class="chip c-dim">${esc(x.status)}</span>`}</td>
-    <td class="muted">${esc(x.products||'')}</td></tr>`).join('')+'</table>':'<div class="muted">No contract records yet (populated by sync + processors).</div>')}
+    <td class="muted">${esc(x.products||'')}</td>
+    <td>${API.canWrite()?`<button class="sec" style="padding:3px 9px" onclick="addCarrierNoteFor(${i})" title="Add a note tagged to ${esc(x.carrier_name)}">＋ note</button>`:''}</td></tr>`).join('')+'</table>':'<div class="muted">No contract records yet (populated by sync + processors).</div>')}
   ${sect('Documents',cnt(d.documents),'<div class="muted" style="font-size:11px">Files are grouped under their matching section above. Anything uncategorized appears here.</div>')}
   <h3>Contract requests</h3>
   ${(d.requests||[]).length?`<table><tr><th>Carrier</th><th>Stage</th><th>Level</th><th>Completed by</th><th>Created</th><th>Submitted</th></tr>`+
     d.requests.map(r=>`<tr class="click" onclick="UI.closeDrawer();location.hash='#requests';setTimeout(()=>requestDetail('${r.id}'),300)">
     <td>${esc(r.carrier_name||r.carrier_key)}</td><td>${UI.chipStage(r.stage)}</td><td>${esc(r.comp_level||'—')}</td>
-    <td>${esc(r.completed_by||'—')}</td><td>${fmtD(r.created_at)}</td><td>${fmtD(r.submitted_at)}</td></tr>`).join('')+'</table>':'<div class="muted">None.</div>'}`);
+    <td>${esc(r.completed_by||'—')}</td><td>${fmtD(r.created_at)}</td><td>${fmtD(r.submitted_at)}</td></tr>`).join('')+'</table>':'<div class="muted">None.</div>'}
+  <div id="p_notes_inline" style="margin-top:20px;border-top:1px solid var(--line);padding-top:12px"><div class="muted">Loading notes…</div></div>`);
+  loadNotesInline(p.id, window._curP.name);
   injectDocCards();
+}
+/* item 16: notes shown inline at the bottom of the producer drawer + per-carrier "add note" */
+async function loadNotesInline(id,name){
+  window._notesName=name;
+  const host=$('#p_notes_inline'); if(!host) return;
+  let d; try{ d=await API.rpc('adm_producer_notes',{p_id:id}); }
+  catch(e){ host.innerHTML=`<h3>Notes</h3><div class="note">${esc(e.message)}</div>`; return; }
+  const notes=(d&&d.ok&&d.notes)||[];
+  const carriers=window._notesCarriers||[];
+  const carrierOpts=['<option value="">General (no carrier)</option>'].concat(
+    carriers.map((c,i)=>`<option value="${i}">${esc(c.name)}</option>`)).join('');
+  host.innerHTML=`
+   <div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Notes</h3>
+     <span class="muted" style="font-size:11px">${notes.length} note${notes.length===1?'':'s'}</span></div>
+   ${API.canWrite()?`<div class="noteline" style="margin-top:8px">
+     <div class="row" style="gap:8px;margin-bottom:6px;align-items:center">
+       <label style="font-size:11.5px;color:var(--dim)">Carrier</label>
+       <select id="pn_carrier" style="min-width:200px">${carrierOpts}</select></div>
+     <textarea id="pn_body" rows="2" style="width:100%" placeholder="Write a note…"></textarea>
+     <div class="row" style="justify-content:flex-end;margin-top:6px"><button onclick="saveInlineNote('${id}')">Save note</button></div>
+   </div>`:'<div class="muted" style="margin:8px 0">Read-only role.</div>'}
+   <div id="pn_list" style="margin-top:10px">${notes.length?notes.map(n=>`
+     <div class="noteline"><div class="meta"><b>${esc(n.author_name||'—')}</b> · ${new Date(n.created_at).toLocaleString()}${n.carrier_name?` · <span class="chip c-acc">${esc(n.carrier_name)}</span>`:''}</div>
+     <div>${esc(n.body).replace(/\n/g,'<br>')}</div></div>`).join(''):'<div class="muted">No notes yet.</div>'}</div>`;
+}
+async function saveInlineNote(id){
+  const el=$('#pn_body'); const body=(el&&el.value||'').trim();
+  if(!body) return UI.toast('Note is empty');
+  const sel=$('#pn_carrier'); let ck=null,cn=null;
+  if(sel && sel.value!==''){ const c=(window._notesCarriers||[])[Number(sel.value)]; if(c){ ck=c.key||null; cn=c.name||null; } }
+  let r; try{ r=await API.rpc('adm_producer_note_add',{p_id:id,p_body:body,p_carrier_key:ck,p_carrier_name:cn}); }
+  catch(e){ return UI.toast(e.message); }
+  if(!r||!r.ok) return UI.toast((r&&r.error)||'Could not save');
+  UI.toast('Note saved'); loadNotesInline(id, window._notesName||'');
+}
+function addCarrierNoteFor(idx){
+  const host=$('#p_notes_inline'); if(host) host.scrollIntoView({behavior:'smooth',block:'start'});
+  const sel=$('#pn_carrier'); if(sel) sel.value=String(idx);
+  const b=$('#pn_body'); if(b) b.focus();
 }
 async function setDba(id,t){ const r=await API.rpc('adm_set_dba',{p_id:id,p_dba_type:t}); UI.toast(r.ok?'DBA set to '+t:r.error); if(r.ok) producerDetail(id); }
 
@@ -858,21 +901,71 @@ async function pfSave(id){
 }
 
 /* ================= ALERTS ================= */
+/* Alerts view state — item 14 (filter/sort) + item 15 (50/page) */
+let _alertState={sort:'expires',dir:1,page:1,f:{},per:50};
 async function Alerts(){
   const r=await API.rpc('adm_alerts');
   if(!r.ok){$('#view').innerHTML=`<div class="card">${esc(r.error)}</div>`;return;}
   const rows=r.rows||[]; window._alerts=rows;
-  const kind=k=>({license:'c-acc',eo:'c-gold',training:'c-warn',agency_eo:'c-bad'})[k]||'c-dim';
+  _alertState={sort:'expires',dir:1,page:1,f:{},per:50};
+  const uniq=k=>[...new Set(rows.map(x=>x[k]).filter(v=>v!=null&&v!==''))].sort();
+  const opt=arr=>['<option value="">All</option>'].concat(arr.map(v=>`<option>${esc(v)}</option>`)).join('');
   $('#view').innerHTML=`
   <div class="card"><div class="row" style="justify-content:space-between"><h2>Alerts</h2>
-    <button class="sec" onclick="UI.csv(window._alerts,'alerts.csv')">Export CSV</button></div>
-    <div class="muted">Licenses, E&amp;O and training expiring within 60 days (or already expired), plus the agency's own E&amp;O.</div></div>
-  <div class="card">${rows.length?`<table><tr><th>Kind</th><th>Producer</th><th>Affiliation</th><th>Detail</th><th>Expires</th><th></th></tr>`+
+    <button class="sec" onclick="UI.csv(alertFiltered(),'alerts.csv')">Export CSV</button></div>
+    <div class="muted">Licenses, E&amp;O and training expiring within 60 days (or already expired), plus the agency's own E&amp;O. Click a column header to sort; use the filters below to narrow.</div></div>
+  <div class="card">
+    <div class="row" id="a_filters" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <select id="af_kind" onchange="alertFilter('kind',this.value)" style="width:140px" title="Filter by alert kind">${opt(uniq('kind'))}</select>
+      <input id="af_producer_name" placeholder="Producer…" oninput="alertFilter('producer_name',this.value)" style="width:170px">
+      <input id="af_affiliation_name" placeholder="Affiliation…" oninput="alertFilter('affiliation_name',this.value)" style="width:170px">
+      <input id="af_detail" placeholder="Detail…" oninput="alertFilter('detail',this.value)" style="width:200px">
+      <select id="af_severity" onchange="alertFilter('severity',this.value)" style="width:140px" title="Filter by status">${opt(uniq('severity'))}</select>
+      <button class="sec" onclick="alertClearFilters()">Clear filters</button>
+    </div>
+    <div id="a_body"></div>
+  </div>`;
+  renderAlerts();
+}
+function alertFilter(k,v){ _alertState.f[k]=v; _alertState.page=1; renderAlerts(); }
+function alertClearFilters(){ _alertState.f={}; ['af_kind','af_producer_name','af_affiliation_name','af_detail','af_severity'].forEach(id=>{const e=document.getElementById(id); if(e) e.value='';}); _alertState.page=1; renderAlerts(); }
+function alertSort(k){ if(_alertState.sort===k) _alertState.dir*=-1; else { _alertState.sort=k; _alertState.dir=1; } renderAlerts(); }
+function alertPage(p){ _alertState.page=p; renderAlerts(); }
+function alertFiltered(){
+  const f=_alertState.f;
+  let rows=(window._alerts||[]).filter(x=>{
+    for(const k in f){ const fv=(f[k]||'').toLowerCase(); if(!fv) continue;
+      const xv=String(x[k]==null?'':x[k]).toLowerCase();
+      if(k==='kind'||k==='severity'){ if(xv!==fv) return false; } else if(xv.indexOf(fv)<0) return false; }
+    return true; });
+  const s=_alertState.sort, d=_alertState.dir;
+  return rows.slice().sort((a,b)=>{ let av=a[s]==null?'':a[s], bv=b[s]==null?'':b[s];
+    if(s!=='expires'){ av=String(av).toLowerCase(); bv=String(bv).toLowerCase(); } else { av=String(av); bv=String(bv); }
+    return (av<bv?-1:av>bv?1:0)*d; });
+}
+function renderAlerts(){
+  const kind=k=>({license:'c-acc',eo:'c-gold',training:'c-warn',agency_eo:'c-bad'})[k]||'c-dim';
+  const all=alertFiltered(), per=_alertState.per;
+  const pages=Math.max(1,Math.ceil(all.length/per));
+  if(_alertState.page>pages) _alertState.page=pages;
+  const pg=_alertState.page, start=(pg-1)*per, rows=all.slice(start,start+per);
+  const arrow=k=>_alertState.sort===k?(_alertState.dir>0?' ▲':' ▼'):'';
+  const H=(k,l)=>`<th class="click" onclick="alertSort('${k}')" title="Click to sort">${l}${arrow(k)}</th>`;
+  const body=all.length?`<table><tr>${H('kind','Kind')}${H('producer_name','Producer')}${H('affiliation_name','Affiliation')}${H('detail','Detail')}${H('expires','Expires')}${H('severity','Status')}</tr>`+
     rows.map(x=>`<tr ${x.producer_id?`class="click" onclick="producerDetail('${x.producer_id}')"`:''}>
     <td><span class="chip ${kind(x.kind)}">${esc(x.kind)}</span></td><td><b>${esc(x.producer_name)}</b></td>
     <td>${esc(x.affiliation_name||'—')}</td><td>${esc(x.detail||'')}</td><td>${fmtD(x.expires)}</td>
     <td>${x.severity==='expired'?'<span class="chip c-bad">expired</span>':'<span class="chip c-warn">expiring</span>'}</td></tr>`).join('')+'</table>'
-    :'<div class="muted">Nothing expiring within 60 days. 🎉</div>'}</div>`;
+    :`<div class="muted">${(window._alerts||[]).length?'No alerts match your filters.':'Nothing expiring within 60 days. 🎉'}</div>`;
+  const showing=all.length?`${start+1}–${Math.min(start+per,all.length)} of ${all.length}`:'0';
+  const pager=all.length>per?`<div class="row" style="justify-content:space-between;margin-top:10px;align-items:center">
+      <span class="muted">Showing ${showing}</span>
+      <span class="row" style="gap:6px;align-items:center">
+        <button class="sec" ${pg<=1?'disabled':''} onclick="alertPage(${pg-1})">‹ Prev</button>
+        <span class="muted">Page ${pg} of ${pages}</span>
+        <button class="sec" ${pg>=pages?'disabled':''} onclick="alertPage(${pg+1})">Next ›</button>
+      </span></div>`:(all.length?`<div class="muted" style="margin-top:8px">Showing all ${all.length}.</div>`:'');
+  $('#a_body').innerHTML=body+pager;
 }
 
 /* ================= AGENCY (settings + principals + agency E&O) ================= */
