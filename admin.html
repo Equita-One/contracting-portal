@@ -290,7 +290,6 @@ async function producerDetail(id){
   UI.openDrawer(`
   <div class="row" style="justify-content:space-between"><h2>${esc(p.first_name)} ${esc(p.last_name)}</h2>
     <div class="row" style="gap:6px">
-      <button class="sec" onclick="var e=document.getElementById('p_notes_inline');if(e)e.scrollIntoView({behavior:'smooth',block:'start'});">Notes ↓</button>
       <button class="sec" onclick="UI.closeDrawer()">Close</button></div></div>
   <div class="pill-row">${UI.chipDba(pr.dba_type)} ${UI.chipStage(p.contract_status||p.stage)}
     ${d.affiliation?`<span class="chip c-acc">${esc(d.affiliation.name)}</span>`:''}
@@ -348,10 +347,22 @@ async function producerDetail(id){
 async function loadNotesInline(id,name){
   window._notesName=name;
   const host=$('#p_notes_inline'); if(!host) return;
+  // Carrier options: all configured carriers (cached) + any of this producer's own contracts, deduped.
+  let carriers=[];
+  try{
+    if(!window._carrierOpts){
+      const cc=await API.rpc('adm_carrier_configs');
+      window._carrierOpts=((cc&&cc.rows)||[]).filter(c=>c.status!=='inactive'&&c.carrier_key)
+        .map(c=>({key:c.carrier_key,name:c.display_name||c.carrier_key}));
+    }
+    carriers=window._carrierOpts.slice();
+  }catch(e){ carriers=[]; }
+  (window._notesCarriers||[]).forEach(pc=>{ if(pc && pc.name && !carriers.some(c=>(c.key&&pc.key&&c.key===pc.key)||c.name===pc.name)) carriers.push(pc); });
+  carriers.sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  window._notesCarrierList=carriers;
   let d; try{ d=await API.rpc('adm_producer_notes',{p_id:id}); }
   catch(e){ host.innerHTML=`<h3>Notes</h3><div class="note">${esc(e.message)}</div>`; return; }
   const notes=(d&&d.ok&&d.notes)||[];
-  const carriers=window._notesCarriers||[];
   const carrierOpts=['<option value="">General (no carrier)</option>'].concat(
     carriers.map((c,i)=>`<option value="${i}">${esc(c.name)}</option>`)).join('');
   host.innerHTML=`
@@ -359,20 +370,23 @@ async function loadNotesInline(id,name){
      <span class="muted" style="font-size:11px">${notes.length} note${notes.length===1?'':'s'}</span></div>
    ${API.canWrite()?`<div class="noteline" style="margin-top:8px">
      <div class="row" style="gap:8px;margin-bottom:6px;align-items:center">
-       <label style="font-size:11.5px;color:var(--dim)">Carrier</label>
-       <select id="pn_carrier" style="min-width:200px">${carrierOpts}</select></div>
+       <span class="muted" style="font-size:11.5px">Tag carrier:</span>
+       <select id="pn_carrier" style="min-width:220px">${carrierOpts}</select>
+       <span class="muted" style="font-size:11px">(optional — leave as General for a non-carrier note)</span></div>
      <textarea id="pn_body" rows="2" style="width:100%" placeholder="Write a note…"></textarea>
      <div class="row" style="justify-content:flex-end;margin-top:6px"><button onclick="saveInlineNote('${id}')">Save note</button></div>
    </div>`:'<div class="muted" style="margin:8px 0">Read-only role.</div>'}
-   <div id="pn_list" style="margin-top:10px">${notes.length?notes.map(n=>`
-     <div class="noteline"><div class="meta"><b>${esc(n.author_name||'—')}</b> · ${new Date(n.created_at).toLocaleString()}${n.carrier_name?` · <span class="chip c-acc">${esc(n.carrier_name)}</span>`:''}</div>
-     <div>${esc(n.body).replace(/\n/g,'<br>')}</div></div>`).join(''):'<div class="muted">No notes yet.</div>'}</div>`;
+   <div id="pn_list" style="margin-top:10px">${notes.length?notes.map(n=>{
+      const tag=n.carrier_name?`<span class="chip c-acc" title="Carrier note">${esc(n.carrier_name)}</span>`:`<span class="chip c-dim" title="General note">General</span>`;
+      return `<div class="noteline"><div class="meta">${tag} · <b>${esc(n.author_name||'—')}</b> · ${new Date(n.created_at).toLocaleString()}</div>
+      <div>${esc(n.body).replace(/\n/g,'<br>')}</div></div>`;
+   }).join(''):'<div class="muted">No notes yet.</div>'}</div>`;
 }
 async function saveInlineNote(id){
   const el=$('#pn_body'); const body=(el&&el.value||'').trim();
   if(!body) return UI.toast('Note is empty');
   const sel=$('#pn_carrier'); let ck=null,cn=null;
-  if(sel && sel.value!==''){ const c=(window._notesCarriers||[])[Number(sel.value)]; if(c){ ck=c.key||null; cn=c.name||null; } }
+  if(sel && sel.value!==''){ const c=(window._notesCarrierList||[])[Number(sel.value)]; if(c){ ck=c.key||null; cn=c.name||null; } }
   let r; try{ r=await API.rpc('adm_producer_note_add',{p_id:id,p_body:body,p_carrier_key:ck,p_carrier_name:cn}); }
   catch(e){ return UI.toast(e.message); }
   if(!r||!r.ok) return UI.toast((r&&r.error)||'Could not save');
@@ -380,7 +394,13 @@ async function saveInlineNote(id){
 }
 function addCarrierNoteFor(idx){
   const host=$('#p_notes_inline'); if(host) host.scrollIntoView({behavior:'smooth',block:'start'});
-  const sel=$('#pn_carrier'); if(sel) sel.value=String(idx);
+  const pc=(window._notesCarriers||[])[idx];
+  const sel=$('#pn_carrier');
+  if(sel && pc){
+    const list=window._notesCarrierList||[];
+    const j=list.findIndex(c=>(c.key&&pc.key&&c.key===pc.key)||c.name===pc.name);
+    sel.value=j>=0?String(j):'';
+  }
   const b=$('#pn_body'); if(b) b.focus();
 }
 async function setDba(id,t){ const r=await API.rpc('adm_set_dba',{p_id:id,p_dba_type:t}); UI.toast(r.ok?'DBA set to '+t:r.error); if(r.ok) producerDetail(id); }
