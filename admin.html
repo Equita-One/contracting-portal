@@ -339,9 +339,30 @@ async function producerDetail(id){
     d.requests.map(r=>`<tr class="click" onclick="UI.closeDrawer();location.hash='#requests';setTimeout(()=>requestDetail('${r.id}'),300)">
     <td>${esc(r.carrier_name||r.carrier_key)}</td><td>${UI.chipStage(r.stage)}</td><td>${esc(r.comp_level||'—')}</td>
     <td>${esc(r.completed_by||'—')}</td><td>${fmtD(r.created_at)}</td><td>${fmtD(r.submitted_at)}</td></tr>`).join('')+'</table>':'<div class="muted">None.</div>'}
-  <div id="p_notes_inline" style="margin-top:20px;border-top:1px solid var(--line);padding-top:12px"><div class="muted">Loading notes…</div></div>`);
+  <div id="p_notes_inline" style="margin-top:20px;border-top:1px solid var(--line);padding-top:12px"><div class="muted">Loading notes…</div></div>
+  <div id="p_discussions_inline" style="margin-top:20px;border-top:1px solid var(--line);padding-top:12px"><div class="muted">Loading discussions…</div></div>`);
   loadNotesInline(p.id, window._curP.name);
+  loadDiscussionsInline(p.id);
   injectDocCards();
+}
+/* item 17: OneHQ discussions shown read-only at the bottom of the producer drawer, below Notes.
+   Synced daily from OneHQ into app.onehq_discussions (matched by NPN), same source the AMS
+   agent-profile Discussions tab and Org Mapping card read from. */
+async function loadDiscussionsInline(id){
+  const host=$('#p_discussions_inline'); if(!host) return;
+  let d; try{ d=await API.rpc('adm_producer_discussions',{p_id:id}); }
+  catch(e){ host.innerHTML=`<h3>Discussions</h3><div class="note">${esc(e.message)}</div>`; return; }
+  if(!d||!d.ok){ host.innerHTML=`<h3>Discussions</h3><div class="note">${esc((d&&d.error)||'Could not load')}</div>`; return; }
+  const rows=d.discussions||[];
+  host.innerHTML=`
+   <div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Discussions</h3>
+     <span class="muted" style="font-size:11px">${rows.length} entr${rows.length===1?'y':'ies'} · synced daily from OneHQ</span></div>
+   <div style="margin-top:10px">${rows.length?rows.map(x=>{
+      const tag=x.category?`<span class="chip c-acc">${esc(x.category)}</span>`:'';
+      const cc=x.comment_count>0?`<span class="muted" style="float:right">${x.comment_count} comment${x.comment_count===1?'':'s'}</span>`:'';
+      return `<div class="noteline">${cc}<div class="meta">${tag}${tag?' · ':''}<b>${esc(x.author_name||'—')}</b>${x.discussion_created_at?' · '+new Date(x.discussion_created_at).toLocaleString():''}</div>
+      <div>${esc(x.note||'').replace(/\n/g,'<br>')}</div></div>`;
+   }).join(''):'<div class="muted">No OneHQ discussions synced yet.</div>'}</div>`;
 }
 /* item 16: notes shown inline at the bottom of the producer drawer + per-carrier "add note" */
 async function loadNotesInline(id,name){
